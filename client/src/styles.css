@@ -1,0 +1,149 @@
+:root {
+  color-scheme: dark;
+  font-family: system-ui, -apple-system, 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', sans-serif;
+  --bg: #0f1530;
+  --bg-elev: #1a2247;
+  --board: #1f2c5c;
+  --rail: #d8e1ff;
+  --road: #6478b8;
+  --camp: #5b6fb0;
+  --hq: #2c3a72;
+  --text: #eef2ff;
+  --muted: #98a2c4;
+  --accent: #f6c95d;
+  --danger: #e36363;
+  --p-n: #d96666;
+  --p-e: #66b27a;
+  --p-s: #6699d9;
+  --p-w: #c98ad9;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+}
+
+button {
+  font: inherit;
+  background: var(--bg-elev);
+  color: var(--text);
+  border: 1px solid #2d3a6e;
+  padding: 0.55rem 1rem;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  background: #243266;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+input,
+select {
+  font: inherit;
+  background: var(--bg-elev);
+  color: var(--text);
+  border: 1px solid #2d3a6e;
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+}
+
+.screen-center {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 2rem;
+}
+
+.card {
+  background: var(--bg-elev);
+  padding: 2rem;
+  border-radius: 10px;
+  min-width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.screen-error {
+  padding: 2rem;
+  color: var(--danger);
+}
+
+.row {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.col {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+h1, h2, h3 {
+  margin: 0;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.piece-inspector {
+  position: absolute;
+  top: 1rem;
+  left: 1rem;
+  background: var(--bg-elev);
+  padding: 1rem;
+  border-radius: 0.5rem;
+  box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+  z-index: 100;
+}
+
+.piece-inspector-name {
+  font-size: 2rem;
+  font-weight: bold;
+}
+
+.piece-inspector-rank {
+  font-size: 1.5rem;
+  color: var(--muted);
+}
+
+.rank-guide {
+  position: absolute;
+  bottom: 1rem;
+  left: 1rem;
+  background: var(--bg-elev);
+  padding: 1rem;
+  border-radius: 0.5rem;
+  box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+  z-index: 100;
+}
+
+.rank-guide-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.rank-guide-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
