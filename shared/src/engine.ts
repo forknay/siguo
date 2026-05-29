@@ -20,7 +20,7 @@ import {
   type PieceRef,
   type SeatId,
 } from './moves.js';
-import { PIECE_DEFS, type PieceKind } from './pieces.js';
+import type { PieceKind } from './pieces.js';
 import { type Layout, validateLayout, hqCellIds } from './setup.js';
 
 export type { SeatId } from './moves.js';
@@ -72,7 +72,24 @@ export interface GameState {
   turnIndex: number;
   movesSinceCapture: number;
   lastCombat: CombatLog | null;
+  /** Most recent move per seat (from→to cell ids) for last-move highlighting. */
+  lastMoveBySeat: Partial<Record<SeatId, { from: string; to: string }>>;
+  /** Append-only history of every move applied to the state. */
+  moveHistory: MoveRecord[];
   result: GameResult | null;
+}
+
+export interface MoveRecord {
+  seat: SeatId;
+  from: string;
+  to: string;
+  turnIndex: number;
+  /** Set when this move resolved combat. */
+  combat?: {
+    winner: 'attacker' | 'defender' | 'tie';
+    attackerKind: PieceKind;
+    defenderKind: PieceKind;
+  };
 }
 
 /** 2v2 team mapping: N+S vs E+W. */
@@ -106,6 +123,8 @@ export function createGameState(
     turnIndex: 0,
     movesSinceCapture: 0,
     lastCombat: null,
+    lastMoveBySeat: {},
+    moveHistory: [],
     result: null,
   };
 }
@@ -322,6 +341,23 @@ export function applyMove(
     result = endResult;
   }
 
+  const moveRecord: MoveRecord = {
+    seat,
+    from,
+    to,
+    turnIndex: state.turnIndex,
+    ...(combatLog
+      ? {
+          combat: {
+            winner: combatLog.result.outcome.winner,
+            attackerKind: combatLog.result.attackerKind,
+            defenderKind: combatLog.result.defenderKind,
+          },
+        }
+      : {}),
+  };
+  const lastMoveBySeat = { ...state.lastMoveBySeat, [seat]: { from, to } };
+
   return {
     state: {
       ...state,
@@ -335,6 +371,8 @@ export function applyMove(
       turnIndex: state.turnIndex + 1,
       movesSinceCapture,
       lastCombat: combatLog,
+      lastMoveBySeat,
+      moveHistory: [...state.moveHistory, moveRecord],
       phase,
       result,
     },

@@ -144,9 +144,11 @@ describe('non-engineer rail slides', () => {
       [zoneCellId('N', 6, 3)]: { owner: 'N', kind: 'LIANZHANG' },
     });
     const moves = new Set(legalMovesFromCell(ctx, zoneCellId('N', 6, 3)));
-    // From N(6,3) sliding south the piece can stop at C(1,2), C(2,2), C(3,2), or S(6,3).
+    // From N(6,3) sliding south the piece can stop at C(1,2) or C(3,2). C(2,2) is
+    // transit-only — pieces pass through but cannot rest there. S(6,3) is also a
+    // legal stop further along the slide.
     expect(moves.has('C-1-2')).toBe(true);
-    expect(moves.has('C-2-2')).toBe(true);
+    expect(moves.has('C-2-2')).toBe(false);
     expect(moves.has('C-3-2')).toBe(true);
   });
 
@@ -202,16 +204,82 @@ describe('engineer rail BFS', () => {
     expect(moves.has(zoneCellId('N', 6, 1))).toBe(true);
   });
 
-  it('engineer can stop in the central area (and reach all 9 central cells)', () => {
+  it('engineer can stop in 8 of the 9 central cells (C-2-2 is transit-only)', () => {
     const ctx = ctxFromMap({
       [zoneCellId('N', 6, 3)]: { owner: 'N', kind: 'GONGBING' },
     });
     const moves = new Set(legalMovesFromCell(ctx, zoneCellId('N', 6, 3)));
     for (let r = 1; r <= 3; r++) {
       for (let c = 1; c <= 3; c++) {
-        expect(moves.has(centerCellId(r, c))).toBe(true);
+        const expected = !(r === 2 && c === 2);
+        expect(moves.has(centerCellId(r, c))).toBe(expected);
       }
     }
+  });
+});
+
+describe('central-corner curves (non-engineer)', () => {
+  it('W(6,5) sliding east curves through C(1,1) to reach N(6,1)', () => {
+    const ctx = ctxFromMap({
+      [zoneCellId('W', 6, 5)]: { owner: 'W', kind: 'LIANZHANG' },
+    });
+    const moves = new Set(legalMovesFromCell(ctx, zoneCellId('W', 6, 5)));
+    expect(moves.has('C-1-1')).toBe(true);
+    expect(moves.has(zoneCellId('N', 6, 1))).toBe(true);
+    // And the curve continues further north along N's col 1 ring.
+    expect(moves.has(zoneCellId('N', 2, 1))).toBe(true);
+    // Straight continuation along the central top row is still available.
+    expect(moves.has('C-1-2')).toBe(true);
+    expect(moves.has(zoneCellId('E', 6, 1))).toBe(true);
+  });
+
+  it('N(6,5) sliding south curves through C(1,3) to reach E(6,1)', () => {
+    const ctx = ctxFromMap({
+      [zoneCellId('N', 6, 5)]: { owner: 'N', kind: 'TUANZHANG' },
+    });
+    const moves = new Set(legalMovesFromCell(ctx, zoneCellId('N', 6, 5)));
+    expect(moves.has(zoneCellId('E', 6, 1))).toBe(true);
+    expect(moves.has(zoneCellId('E', 2, 1))).toBe(true);
+    // Straight south through the center continues to S(6,1) (S is rotated 180°
+    // so N's col 5 maps to S's col 1 globally).
+    expect(moves.has(zoneCellId('S', 6, 1))).toBe(true);
+  });
+
+  it('S(6,5) sliding north curves through C(3,1) to reach W(6,1)', () => {
+    const ctx = ctxFromMap({
+      [zoneCellId('S', 6, 5)]: { owner: 'S', kind: 'JUNZHANG' },
+    });
+    const moves = new Set(legalMovesFromCell(ctx, zoneCellId('S', 6, 5)));
+    expect(moves.has(zoneCellId('W', 6, 1))).toBe(true);
+  });
+
+  it('curve blocked by ally on the curve-exit zone front line', () => {
+    const ctx = ctxFromMap({
+      [zoneCellId('W', 6, 5)]: { owner: 'W', kind: 'LIANZHANG' },
+      [zoneCellId('N', 6, 1)]: { owner: 'W', kind: 'PAIZHANG' }, // ally in W team
+    }, { N: ['N'], E: ['E'], S: ['S'], W: ['W'] });
+    // For non-team mode (each its own team), the W piece at N(6,1) is an enemy.
+    // Let's use teammate aliasing so this is an ally:
+    const tmCtx = ctxFromMap({
+      [zoneCellId('W', 6, 5)]: { owner: 'W', kind: 'LIANZHANG' },
+      [zoneCellId('N', 6, 1)]: { owner: 'W', kind: 'PAIZHANG' },
+    }, { N: ['W', 'N'], E: ['E'], S: ['S'], W: ['W', 'N'] });
+    const moves = new Set(legalMovesFromCell(tmCtx, zoneCellId('W', 6, 5)));
+    expect(moves.has(zoneCellId('N', 6, 1))).toBe(false);
+    // The curve cell C(1,1) itself is still reachable as a stop.
+    expect(moves.has('C-1-1')).toBe(true);
+    // Sanity: ctx ref used to keep linter quiet.
+    expect(ctx).toBeDefined();
+  });
+
+  it('curve stops at enemy on curve-exit cell (combat target)', () => {
+    const ctx = ctxFromMap({
+      [zoneCellId('W', 6, 5)]: { owner: 'W', kind: 'LIANZHANG' },
+      [zoneCellId('N', 6, 1)]: { owner: 'N', kind: 'PAIZHANG' }, // enemy
+    });
+    const moves = new Set(legalMovesFromCell(ctx, zoneCellId('W', 6, 5)));
+    expect(moves.has(zoneCellId('N', 6, 1))).toBe(true);  // combat target
+    expect(moves.has(zoneCellId('N', 5, 1))).toBe(false); // can't pass through
   });
 });
 

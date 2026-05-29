@@ -59,11 +59,22 @@ export const MoveMsg = z.object({
 });
 
 export const ResignMsg = z.object({ type: z.literal('Resign') });
+export const OfferDrawMsg = z.object({ type: z.literal('OfferDraw') });
+export const AcceptDrawMsg = z.object({ type: z.literal('AcceptDraw') });
+export const CancelDrawMsg = z.object({ type: z.literal('CancelDraw') });
 
 export const ChatMsg = z.object({
   type: z.literal('Chat'),
   text: z.string().min(1).max(200),
 });
+
+export const SetRoomConfigMsg = z.object({
+  type: z.literal('SetRoomConfig'),
+  /** Bot move speed (controls artificial delay between bot moves). */
+  botSpeed: z.enum(['slow', 'normal', 'fast', 'instant']).optional(),
+});
+
+export const RequestReplayMsg = z.object({ type: z.literal('RequestReplay') });
 
 export const ClientMessage = z.discriminatedUnion('type', [
   CreateRoomMsg,
@@ -73,7 +84,12 @@ export const ClientMessage = z.discriminatedUnion('type', [
   SubmitSetupMsg,
   MoveMsg,
   ResignMsg,
+  OfferDrawMsg,
+  AcceptDrawMsg,
+  CancelDrawMsg,
   ChatMsg,
+  SetRoomConfigMsg,
+  RequestReplayMsg,
 ]);
 export type ClientMessage = z.infer<typeof ClientMessage>;
 
@@ -100,6 +116,8 @@ export const LobbyUpdateMsg = z.object({
   mode: GameModeSchema,
   hostToken: z.string(),
   lanUrls: z.array(z.string()),
+  botSpeed: z.enum(['slow', 'normal', 'fast', 'instant']),
+  pendingDrawOffers: z.array(SeatIdSchema),
   seats: z.record(
     SeatIdSchema,
     z.object({
@@ -136,6 +154,11 @@ export const ChatBroadcastMsg = z.object({
   channel: z.enum(['all', 'team']),
 });
 
+export const ReplayPayloadMsg = z.object({
+  type: z.literal('ReplayPayload'),
+  text: z.string(),
+});
+
 export const ErrorMsg = z.object({
   type: z.literal('Error'),
   message: z.string(),
@@ -148,6 +171,7 @@ export const ServerMessage = z.discriminatedUnion('type', [
   StateUpdateMsg,
   CombatRevealMsg,
   ChatBroadcastMsg,
+  ReplayPayloadMsg,
   ErrorMsg,
 ]);
 export type ServerMessage = z.infer<typeof ServerMessage>;
@@ -165,3 +189,4 @@ export type RoomJoined = z.infer<typeof RoomJoinedMsg>;
 export type StateUpdate = z.infer<typeof StateUpdateMsg>;
 export type CombatReveal = z.infer<typeof CombatRevealMsg>;
 export type ChatBroadcast = z.infer<typeof ChatBroadcastMsg>;
+export type BotSpeed = 'slow' | 'normal' | 'fast' | 'instant';

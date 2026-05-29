@@ -83,6 +83,29 @@ describe('road edges', () => {
     expect(n.has(zoneCellId('N', 5, 4))).toBe(true);
   });
 
+  it('every camp has 8-directional adjacency (4 orthogonal + 4 diagonal)', () => {
+    const cornerCamp = zoneCellId('N', 3, 2);
+    const n = new Set(getRoadNeighbors(cornerCamp));
+    // Orthogonal neighbors
+    expect(n.has(zoneCellId('N', 2, 2))).toBe(true);
+    expect(n.has(zoneCellId('N', 4, 2))).toBe(true);
+    expect(n.has(zoneCellId('N', 3, 1))).toBe(true);
+    expect(n.has(zoneCellId('N', 3, 3))).toBe(true);
+    // Diagonals
+    expect(n.has(zoneCellId('N', 2, 1))).toBe(true);
+    expect(n.has(zoneCellId('N', 2, 3))).toBe(true);
+    expect(n.has(zoneCellId('N', 4, 1))).toBe(true);
+    expect(n.has(zoneCellId('N', 4, 3))).toBe(true); // diagonal → center camp
+  });
+
+  it('center cell C(2,2) is transit-only', () => {
+    const cc = getCell(centerCellId(2, 2));
+    expect(cc.transitOnly).toBe(true);
+    // Other central cells are stoppable (no transitOnly flag).
+    expect(getCell(centerCellId(1, 1)).transitOnly).toBeUndefined();
+    expect(getCell(centerCellId(3, 3)).transitOnly).toBeUndefined();
+  });
+
   it('no road crosses between zones', () => {
     for (const id of getRoadNeighbors(zoneCellId('N', 6, 3))) {
       expect(getCell(id).zone).toBe('N');

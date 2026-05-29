@@ -199,6 +199,53 @@ io.on('connection', (socket) => {
         chainBotTurns(room);
         break;
       }
+      case 'OfferDraw': {
+        if (!bound?.seat) return;
+        const room = rooms.get(bound.roomCode);
+        if (!room || !room.state || room.state.phase !== 'PLAYING') return;
+        room.offerDraw(bound.seat);
+        // Auto-accept if all alive seats have offered.
+        if (room.acceptDraw(bound.seat)) {
+          broadcastState(room);
+        }
+        broadcastLobby(room);
+        break;
+      }
+      case 'AcceptDraw': {
+        if (!bound?.seat) return;
+        const room = rooms.get(bound.roomCode);
+        if (!room) return;
+        if (room.acceptDraw(bound.seat)) {
+          broadcastState(room);
+        }
+        broadcastLobby(room);
+        break;
+      }
+      case 'CancelDraw': {
+        if (!bound?.seat) return;
+        const room = rooms.get(bound.roomCode);
+        if (!room) return;
+        room.cancelDraw(bound.seat);
+        broadcastLobby(room);
+        break;
+      }
+      case 'SetRoomConfig': {
+        if (!bound) return;
+        const room = rooms.get(bound.roomCode);
+        if (!room) return;
+        if (!room.isHost(bound.token)) { sendError(socket.id, 'Only host can change config'); return; }
+        if (msg.botSpeed) room.setBotSpeed(msg.botSpeed);
+        broadcastLobby(room);
+        break;
+      }
+      case 'RequestReplay': {
+        if (!bound) return;
+        const room = rooms.get(bound.roomCode);
+        if (!room) return;
+        const text = room.buildReplayString();
+        if (text) emit(socket.id, { type: 'ReplayPayload', text });
+        break;
+      }
       case 'Chat': {
         if (!bound) return;
         const room = rooms.get(bound.roomCode);

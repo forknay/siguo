@@ -1,56 +1,58 @@
 // Large zoomed-in view of the currently selected/picked piece. Floats in the
-// top-left corner of the board so the small piece glyphs on the board don't have
-// to be readable up close.
+// top-left corner of the board so the small piece glyphs on the board can stay
+// tiny while you can still see clearly which one you just clicked.
+//
+// Layout: Chinese name + English name on top, then a big colored tile rendering
+// of the piece (matching the on-board look) below.
 
 import { PIECE_DEFS, type PieceKind } from '@siguo/shared';
 
 interface Props {
   kind: PieceKind | null;
-  /** Display label below the glyph, e.g. "Selected" or "Place this piece". */
-  label?: string;
-  /** Override the tile color (e.g. seat color of the owner). */
-  color?: string;
+  /** Optional caption below the glyph (e.g. "Selected", "Place this piece"). */
+  label?: string | undefined;
+  /** Optional accent color (e.g. seat color of the piece's owner). */
+  color?: string | undefined;
 }
 
+const TILE_SIZE = 96;
+
 export function PieceInspector({ kind, label, color }: Props) {
+  const tileColor = color ?? '#6699d9';
   return (
-    <div
-      style={{
-        position: 'absolute',
-        top: 12,
-        left: 12,
-        background: 'rgba(15, 21, 48, 0.85)',
-        border: '1px solid #2d3a6e',
-        borderRadius: 10,
-        padding: '0.6rem 0.8rem',
-        pointerEvents: 'none',
-        minWidth: 110,
-        textAlign: 'center',
-      }}
-    >
-      <div
-        style={{
-          width: 84,
-          height: 84,
-          margin: '0 auto',
-          borderRadius: 10,
-          background: kind ? color ?? '#6699d9' : 'transparent',
-          border: kind ? '2px solid #0e1530' : '1px dashed #3a4a82',
-          display: 'grid',
-          placeItems: 'center',
-          fontFamily: 'system-ui, "PingFang SC", "Microsoft YaHei", sans-serif',
-          fontWeight: 700,
-          fontSize: 36,
-          color: '#0e1530',
-        }}
-      >
-        {kind ? PIECE_DEFS[kind].chinese : <span style={{ color: 'var(--muted)', fontSize: 12, fontWeight: 400 }}>none</span>}
+    <div className="piece-inspector" style={color ? { borderTop: `4px solid ${color}` } : undefined}>
+      <div className="piece-inspector-name">
+        {kind
+          ? PIECE_DEFS[kind].chinese
+          : <span className="muted" style={{ fontSize: '1rem' }}>none</span>}
       </div>
-      <div style={{ marginTop: 6, fontSize: 12, color: 'var(--text)' }}>
+      <div className="piece-inspector-rank">
         {kind ? PIECE_DEFS[kind].english : <span className="muted">{label ?? 'Click a piece'}</span>}
       </div>
+      {kind && (
+        <div
+          style={{
+            marginTop: 10,
+            width: TILE_SIZE,
+            height: TILE_SIZE,
+            borderRadius: 12,
+            background: tileColor,
+            border: '2px solid #0e1530',
+            display: 'grid',
+            placeItems: 'center',
+            fontFamily: 'system-ui, "PingFang SC", "Microsoft YaHei", sans-serif',
+            fontWeight: 700,
+            fontSize: 44,
+            color: '#0e1530',
+            marginLeft: 'auto',
+            marginRight: 'auto',
+          }}
+        >
+          {PIECE_DEFS[kind].chinese}
+        </div>
+      )}
       {kind && label && (
-        <div style={{ fontSize: 10, color: 'var(--muted)' }}>{label}</div>
+        <div className="muted" style={{ fontSize: 11, marginTop: 6 }}>{label}</div>
       )}
     </div>
   );

@@ -1,5 +1,6 @@
 import { useGame, leaveRoom } from '../state.js';
-import type { SeatId } from '@siguo/shared';
+import type { BotSpeed, SeatId } from '@siguo/shared';
+import { ChatPanel } from '../components/ChatPanel.js';
 
 const SEATS: SeatId[] = ['N', 'E', 'S', 'W'];
 const SEAT_COLORS: Record<SeatId, string> = { N: 'var(--p-n)', E: 'var(--p-e)', S: 'var(--p-s)', W: 'var(--p-w)' };
@@ -90,6 +91,27 @@ export function Lobby() {
           })}
         </div>
 
+        {isHost && (
+          <div className="row" style={{ gap: '0.5rem', alignItems: 'center' }}>
+            <span className="muted" style={{ fontSize: 12 }}>Bot speed:</span>
+            {(['slow', 'normal', 'fast', 'instant'] as BotSpeed[]).map((spd) => (
+              <button
+                key={spd}
+                onClick={() => send({ type: 'SetRoomConfig', botSpeed: spd })}
+                style={{
+                  fontSize: 11,
+                  padding: '0.2rem 0.5rem',
+                  background: lobby.botSpeed === spd ? 'var(--accent)' : 'var(--bg-elev)',
+                  color: lobby.botSpeed === spd ? '#0e1530' : 'var(--text)',
+                  fontWeight: lobby.botSpeed === spd ? 700 : 400,
+                }}
+              >
+                {spd}
+              </button>
+            ))}
+          </div>
+        )}
+
         {isHost ? (
           <button
             disabled={!seatsFilled}
@@ -98,8 +120,10 @@ export function Lobby() {
             {seatsFilled ? 'Start game' : 'Waiting for players…'}
           </button>
         ) : (
-          <div className="muted">Waiting for host to start the game…</div>
+          <div className="muted">Waiting for host to start the game… Bot speed: {lobby.botSpeed}</div>
         )}
+
+        <ChatPanel />
       </div>
     </div>
   );

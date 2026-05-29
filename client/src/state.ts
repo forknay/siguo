@@ -40,6 +40,8 @@ interface GameStore {
   pendingCombat: PendingCombat | null;
   chatLog: Array<{ name: string; text: string; ts: number }>;
   lastError: string | null;
+  /** Server-provided replay text (received after RequestReplay). */
+  replayText: string | null;
 
   // actions
   connect: () => Promise<void>;
@@ -81,6 +83,7 @@ export const useGame = create<GameStore>((set, get) => ({
   pendingCombat: null,
   chatLog: [],
   lastError: null,
+  replayText: null,
 
   connect: async () => {
     if (get().socket) return;
@@ -133,6 +136,9 @@ export const useGame = create<GameStore>((set, get) => ({
           break;
         case 'Error':
           set({ lastError: raw.message });
+          break;
+        case 'ReplayPayload':
+          set({ replayText: raw.text });
           break;
       }
     });

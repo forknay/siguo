@@ -1,19 +1,35 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Landing } from './screens/Landing.js';
 import { Lobby } from './screens/Lobby.js';
 import { Setup } from './screens/Setup.js';
 import { Play } from './screens/Play.js';
+import { Replay } from './screens/Replay.js';
 import { useGame } from './state.js';
 
 export function App() {
   const phase = useGame((s) => s.phase);
   const [bootError, setBootError] = useState<string | null>(null);
 
+  // Replay mode: read ?replay=<encoded> from URL. Skips the websocket connect.
+  const replayPayload = useMemo(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      return params.get('replay');
+    } catch {
+      return null;
+    }
+  }, []);
+
   useEffect(() => {
+    if (replayPayload) return; // replay mode doesn't connect to the server
     useGame.getState().connect().catch((err: unknown) => {
       setBootError(err instanceof Error ? err.message : String(err));
     });
-  }, []);
+  }, [replayPayload]);
+
+  if (replayPayload) {
+    return <Replay encoded={decodeURIComponent(replayPayload)} />;
+  }
 
   if (bootError) {
     return (

@@ -7,13 +7,21 @@ interface PieceProps {
   ownerColor: string;
   frozen: boolean;
   revealed: boolean;
+  /** Rotation (in degrees) to apply to the text glyph to keep it upright when
+   *  the parent board is rotated for the viewer. */
+  textCounterRotate?: number;
 }
 
-export function Piece({ x, y, kind, ownerColor, frozen, revealed }: PieceProps) {
+export function Piece({ x, y, kind, ownerColor, frozen, revealed, textCounterRotate = 0 }: PieceProps) {
   const size = 0.68;
   const opacity = frozen ? 0.5 : 1;
   return (
-    <g transform={`translate(${x},${y})`} opacity={opacity} pointerEvents="none">
+    <g
+      transform={`translate(${x},${y})`}
+      opacity={opacity}
+      pointerEvents="none"
+      style={{ transition: 'transform 280ms ease-in-out, opacity 200ms linear' }}
+    >
       <rect
         x={-size / 2}
         y={-size / 2}
@@ -28,11 +36,12 @@ export function Piece({ x, y, kind, ownerColor, frozen, revealed }: PieceProps) 
       {revealed && kind ? (
         <text
           x={0}
-          y={0.1}
+          y={0.08}
           textAnchor="middle"
-          fontSize={0.2}
+          fontSize={0.28}
           fill="#0e1530"
           fontWeight={700}
+          transform={textCounterRotate ? `rotate(${textCounterRotate})` : undefined}
           style={{ fontFamily: 'system-ui, "PingFang SC", "Microsoft YaHei", sans-serif' }}
         >
           {PIECE_DEFS[kind].chinese}

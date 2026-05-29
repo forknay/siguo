@@ -147,3 +147,27 @@ h1, h2, h3 {
   gap: 1rem;
 }
 
+.board-container {
+  position: relative;
+  padding: 0.5rem 0.5rem 0.5rem 160px;
+  /* Reserve the left margin for the floating PieceInspector / RankGuide so they
+     don't overlap the board on narrow screens. Drops to a thinner reserve at
+     small widths. */
+}
+
+@media (max-width: 1100px) {
+  .board-container {
+    padding-left: 120px;
+  }
+}
+
+@media (max-width: 900px) {
+  .board-container {
+    padding-left: 100px;
+  }
+}
+
+.side-panel {
+  border-left: 1px solid #2d3a6e;
+}
+

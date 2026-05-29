@@ -5,6 +5,7 @@ import {
   submitSetup,
   applyMove,
   applyResign,
+  type BotSpeed,
   type GameState,
   type GameMode,
   type SeatId,
@@ -13,6 +14,8 @@ import {
 import { projectView } from '@siguo/shared';
 import type { CombatReveal, LobbyUpdate, ServerMessage } from '@siguo/shared';
 import { randomValidSetup } from '@siguo/shared';
+
+const ZONES: SeatId[] = ['N', 'E', 'S', 'W'];
 
 export type SeatOccupant =
   | { kind: 'empty' }
@@ -28,11 +31,46 @@ export class Room {
   /** Seat → who sits there. */
   occupants: Record<SeatId, SeatOccupant> = { N: { kind: 'empty' }, E: { kind: 'empty' }, S: { kind: 'empty' }, W: { kind: 'empty' } };
   state: GameState | null = null;
+  /** Snapshot of the per-seat setup layouts at game-start (used to build replays). */
+  setupSnapshot: Record<SeatId, Parameters<typeof submitSetup>[2]> | null = null;
+  botSpeed: BotSpeed = 'normal';
+  /** Seats that have a pending draw offer that hasn't been accepted/cancelled. */
+  pendingDrawOffers: Set<SeatId> = new Set();
 
   constructor(code: string, mode: GameMode, hostToken: string) {
     this.code = code;
     this.mode = mode;
     this.hostToken = hostToken;
+  }
+
+  setBotSpeed(s: BotSpeed): void {
+    this.botSpeed = s;
+  }
+
+  // ---- Draw offers ----
+
+  offerDraw(seat: SeatId): void {
+    this.pendingDrawOffers.add(seat);
+  }
+
+  cancelDraw(seat: SeatId): void {
+    this.pendingDrawOffers.delete(seat);
+  }
+
+  /** Accept all pending draws — if every non-eliminated seat has offered, the game ends. */
+  acceptDraw(seat: SeatId): boolean {
+    if (!this.state || this.state.phase !== 'PLAYING') return false;
+    this.pendingDrawOffers.add(seat);
+    const alive = ZONES.filter((z) => !this.state!.seats[z].eliminated);
+    const allAgreed = alive.every((z) => this.pendingDrawOffers.has(z));
+    if (!allAgreed) return false;
+    this.state = {
+      ...this.state,
+      phase: 'ENDED',
+      result: { kind: 'DRAW', reason: 'AGREEMENT' },
+    };
+    this.pendingDrawOffers.clear();
+    return true;
   }
 
   // ---- Lobby helpers ----
@@ -119,12 +157,15 @@ export class Room {
       seats[s] = { playerId, displayName: name, isBot, eliminated: false, setupReady: false };
     }
     this.state = createGameState(this.mode, seats);
+    this.setupSnapshot = { N: {}, E: {}, S: {}, W: {} } as Record<SeatId, Parameters<typeof submitSetup>[2]>;
     // Pre-submit setup for all bot seats with a random valid layout.
     for (const s of ALL_SEATS) {
       if (this.occupants[s].kind === 'bot') {
-        const r = submitSetup(this.state, s, randomValidSetup(s));
+        const layout = randomValidSetup(s);
+        const r = submitSetup(this.state, s, layout);
         if ('errors' in r) throw new Error('bot setup errors: ' + r.errors.join(','));
         this.state = r.state;
+        this.setupSnapshot[s] = layout;
       }
     }
     return true;
@@ -138,6 +179,10 @@ export class Room {
     const r = submitSetup(this.state, seat, layout);
     if ('errors' in r) return { ok: false, errors: r.errors };
     this.state = r.state;
+    if (!this.setupSnapshot) {
+      this.setupSnapshot = { N: {}, E: {}, S: {}, W: {} } as Record<SeatId, Parameters<typeof submitSetup>[2]>;
+    }
+    this.setupSnapshot[seat] = layout;
     return { ok: true };
   }
 
@@ -202,6 +247,8 @@ export class Room {
       mode: this.mode,
       hostToken: this.hostToken,
       lanUrls,
+      botSpeed: this.botSpeed,
+      pendingDrawOffers: Array.from(this.pendingDrawOffers),
       seats,
     };
   }
@@ -210,5 +257,14 @@ export class Room {
   stateUpdateForSeat(seat: SeatId | null, debug = false): ServerMessage | null {
     if (!this.state) return null;
     return { type: 'StateUpdate', view: projectView(this.state, seat, { debug }) };
+  }
+
+  /** Build a replay text payload from the current state + setup snapshot. */
+  buildReplayString(): string | null {
+    if (!this.state || !this.setupSnapshot) return null;
+    // Use the imported encodeGame lazily to avoid a circular dep at module load.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { encodeGame } = require('@siguo/shared') as typeof import('@siguo/shared');
+    return encodeGame(this.setupSnapshot, this.mode, this.state.moveHistory);
   }
 }

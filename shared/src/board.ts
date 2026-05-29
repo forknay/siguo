@@ -18,6 +18,8 @@
 
 export const ZONES = ['N', 'E', 'S', 'W'] as const;
 export type ZoneId = (typeof ZONES)[number];
+export type SeatId = ZoneId;
+export type GameMode = '2v2' | 'ffa';
 
 export const DIRECTIONS = ['N', 'E', 'S', 'W'] as const;
 export type Direction = (typeof DIRECTIONS)[number];
@@ -33,6 +35,9 @@ export interface Cell {
   y: number;
   type: CellType;
   onRail: boolean;
+  /** Pieces may move THROUGH this cell along the rail but cannot stop on it.
+   *  Used for the center-center junction C(2,2). */
+  transitOnly?: boolean;
 }
 
 export type RailNeighbors = Partial<Record<Direction, string>>;
@@ -104,12 +109,16 @@ function buildBoard(): BoardGraph {
     }
   }
 
-  // 2. Generate central cells: 3×3 grid of stoppable rail nodes.
+  // 2. Generate central cells: 3×3 grid of stoppable rail nodes. The very center
+  //    C(2,2) is transit-only — pieces may pass through but cannot rest there.
   for (let row = 1; row <= 3; row++) {
     for (let col = 1; col <= 3; col++) {
       const id = centerCellId(row, col);
       const { x, y } = centerPosition(row, col);
-      cells.set(id, { id, zone: 'C', row, col, x, y, type: 'CENTER', onRail: true });
+      const transitOnly = row === 2 && col === 2;
+      const cell: Cell = { id, zone: 'C', row, col, x, y, type: 'CENTER', onRail: true };
+      if (transitOnly) cell.transitOnly = true;
+      cells.set(id, cell);
     }
   }
 
@@ -128,11 +137,24 @@ function buildBoard(): BoardGraph {
         if (row < 6) addRoad(here, zoneCellId(zone, row + 1, col));
       }
     }
-    const centerCamp = zoneCellId(zone, 4, 3);
-    addRoad(centerCamp, zoneCellId(zone, 3, 2));
-    addRoad(centerCamp, zoneCellId(zone, 3, 4));
-    addRoad(centerCamp, zoneCellId(zone, 5, 2));
-    addRoad(centerCamp, zoneCellId(zone, 5, 4));
+    // 8-directional adjacency from every camp (行营), not just the center one.
+    // The four corner camps and the center camp each gain road edges to their
+    // four diagonal neighbors (in addition to the orthogonal road edges from
+    // the loop above).
+    const campDiagonals: Array<[number, number, Array<[number, number]>]> = [
+      // [campRow, campCol, [(diagRow, diagCol), ...]]
+      [3, 2, [[2, 1], [2, 3], [4, 1], [4, 3]]],
+      [3, 4, [[2, 3], [2, 5], [4, 3], [4, 5]]],
+      [4, 3, [[3, 2], [3, 4], [5, 2], [5, 4]]],
+      [5, 2, [[4, 1], [4, 3], [6, 1], [6, 3]]],
+      [5, 4, [[4, 3], [4, 5], [6, 3], [6, 5]]],
+    ];
+    for (const [cRow, cCol, diagonals] of campDiagonals) {
+      const campId = zoneCellId(zone, cRow, cCol);
+      for (const [dRow, dCol] of diagonals) {
+        addRoad(campId, zoneCellId(zone, dRow, dCol));
+      }
+    }
   }
 
   // 4. Rail edges — built explicitly (no longer derived purely from global adjacency

@@ -11,6 +11,8 @@ import {
   type Layout,
 } from '@siguo/shared';
 import { Board, SEAT_COLORS } from '../components/Board.js';
+import { PieceInspector } from '../components/PieceInspector.js';
+import { RankGuide } from '../components/RankGuide.js';
 
 export function Setup() {
   const seat = useGame((s) => s.seat);
@@ -67,11 +69,17 @@ export function Setup() {
     if (pickedKind === 'JUNQI' && cell.type !== 'HQ') return;
     if (pickedKind === 'DILEI' && cell.row > 2) return;
     if (pickedKind === 'ZHADAN' && cell.row === 6) return;
-    // If there's already a piece here, swap (return it to bank).
+    // If there's already a piece here we just overwrite (the old kind goes back to bank).
     const next = { ...layout };
     next[cellId] = pickedKind;
     setLayout(next);
-    setPickedKind(null);
+    // Sticky picker (#29): keep the same kind selected so the player can drop
+    // multiple mines/engineers/etc in a row without re-clicking the bank. Auto-
+    // clear when the bank for this kind reaches 0.
+    const remainingAfter = def.count - (usedCount + 1);
+    if (remainingAfter <= 0) {
+      setPickedKind(null);
+    }
   }
 
   function autoFill() {
@@ -98,13 +106,20 @@ export function Setup() {
 
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 280px', height: '100vh' }}>
-      <div style={{ padding: '0.5rem' }}>
+      <div className="board-container">
         <Board
           pieces={pieces}
           setupPlaceableCells={placeableCells}
           setupOccupiedCells={setupOccupied}
           onCellClick={placePiece}
+          viewerSeat={mine}
         />
+        <PieceInspector
+          kind={pickedKind}
+          color={SEAT_COLORS[mine]}
+          label={pickedKind ? 'Click a cell to place' : 'Pick a piece below'}
+        />
+        <RankGuide />
       </div>
       <div className="col" style={{ padding: '1rem', background: 'var(--bg-elev)', overflowY: 'auto' }}>
         <h2 style={{ color: SEAT_COLORS[mine] }}>Set up — seat {mine}</h2>
@@ -119,8 +134,13 @@ export function Setup() {
           <button onClick={submit} disabled={!isComplete || submitted}>Submit setup</button>
         </div>
         <div className="muted" style={{ fontSize: 12 }}>
-          Click a piece below, then click a cell in your zone. Click a placed piece to return it to the bank.
+          Click a piece below, then click cells in your zone to place them. The selection stays so you can place all of one kind in a row. Click a placed piece to return it to the bank.
         </div>
+        {pickedKind && (
+          <button onClick={() => setPickedKind(null)} style={{ fontSize: 11 }}>
+            Deselect piece
+          </button>
+        )}
         <div className="muted" style={{ fontSize: 12 }}>
           Constraints: 军旗 must be in an HQ. 地雷 only in back 2 rows. 炸弹 not in the front line.
         </div>

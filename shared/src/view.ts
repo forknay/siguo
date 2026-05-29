@@ -1,7 +1,7 @@
 // Per-player view projection. Replaces hidden piece kinds with `null` so the wire
 // payload never contains information the player isn't allowed to see.
 
-import { type GameState, type SeatId, type PieceState, isAlly } from './engine.js';
+import { type GameState, type SeatId, type PieceState, type MoveRecord, isAlly } from './engine.js';
 import { hqCellIds } from './setup.js';
 import type { PieceKind } from './pieces.js';
 
@@ -27,6 +27,8 @@ export interface PlayerView {
   marshalDead: GameState['marshalDead'];
   pieces: VisiblePiece[];
   lastCombat: GameState['lastCombat'];
+  lastMoveBySeat: GameState['lastMoveBySeat'];
+  moveHistory: MoveRecord[];
   result: GameState['result'];
   viewerSeat: SeatId | null; // null for spectator
 }
@@ -58,6 +60,8 @@ export function projectView(
     marshalDead: state.marshalDead,
     pieces: visible,
     lastCombat: state.lastCombat,
+    lastMoveBySeat: state.lastMoveBySeat,
+    moveHistory: state.moveHistory,
     result: state.result,
     viewerSeat,
   };

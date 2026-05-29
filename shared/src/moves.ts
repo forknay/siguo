@@ -4,7 +4,11 @@
 //   Roads (one step) — orthogonal neighbors + the 4 X-diagonals around the camp cluster.
 //   Rails (multi-step slide) — only mobile pieces standing on a rail cell may use rails.
 //     - Non-engineer: pick one direction; slide while empty; stop at the first non-empty
-//       cell (combat if enemy, blocked if ally) or at the rail terminus.
+//       cell (combat if enemy, blocked if ally) or at the rail terminus. Additionally,
+//       the four corner cells of the central rail (the smooth banked curves where two
+//       adjacent zones meet) are passable by any piece — a non-engineer slide may
+//       follow the curve from one zone's front line through the corner cell to the
+//       neighboring zone's front line.
 //     - Engineer: BFS across rail-connected cells; can turn corners freely.
 //
 // Special cell rules:
@@ -88,6 +92,7 @@ export function legalMovesForSeat(
 
 function canStopAt(ctx: MoveContext, mover: PieceRef, cellId: string): boolean {
   const cell = getCell(cellId);
+  if (cell.transitOnly) return false;
   const occupant = ctx.pieceAt(cellId);
   if (occupant && ctx.isAlly(occupant.owner, mover.owner)) return false;
   if (cell.type === 'CAMP') {
@@ -105,8 +110,9 @@ function slideRail(
   out: Set<string>,
 ): void {
   let current = fromCellId;
+  let currentDir = dir;
   while (true) {
-    const nextId = getRailNeighbor(current, dir);
+    const nextId = getRailNeighbor(current, currentDir);
     if (!nextId) return;
     const next = getCell(nextId);
     const occupant = ctx.pieceAt(nextId);
@@ -115,10 +121,82 @@ function slideRail(
       if (next.type !== 'CAMP') out.add(nextId);
       return;
     }
-    // Empty cell — legal stop.
-    out.add(nextId);
+    // Empty cell — legal stop unless it's a transit-only junction (C-2-2).
+    if (!next.transitOnly) out.add(nextId);
+    // If `next` is a curve corner cell entered in a direction that the curve
+    // accepts, fork a new slide from this cell in the curve-exit direction. The
+    // original straight slide also continues below.
+    const curveExitDir = CORNER_CURVE_EXITS[nextId]?.[currentDir];
+    if (curveExitDir) {
+      slideRail(ctx, mover, nextId, curveExitDir, out);
+    }
     current = nextId;
   }
+}
+
+/**
+ * Corner cells of the central 3×3 rail grid are visually rendered as smooth
+ * banked curves connecting two zones' front lines. A slide that ENTERS a corner
+ * cell in one direction may continue THROUGH the curve and exit perpendicular,
+ * without counting as a 90° turn for non-engineers.
+ *
+ * Encoded as: cornerCellId → entry-direction → curve-exit direction.
+ *   C(1,1): connects W(6,5) ↔ N(6,1). East-entry curves north; south-entry curves west.
+ *   C(1,3): connects N(6,5) ↔ E(6,1). South-entry curves east;  west-entry curves north.
+ *   C(3,1): connects W(6,1) ↔ S(6,5). East-entry curves south;  north-entry curves west.
+ *   C(3,3): connects E(6,5) ↔ S(6,1). West-entry curves south;  north-entry curves east.
+ */
+const CORNER_CURVE_EXITS: Record<string, Partial<Record<Direction, Direction>>> = {
+  'C-1-1': { E: 'N', S: 'W' },
+  'C-1-3': { W: 'N', S: 'E' },
+  'C-3-1': { E: 'S', N: 'W' },
+  'C-3-3': { W: 'S', N: 'E' },
+};
+
+/**
+ * Reconstruct the ordered list of cells a move traverses, for path-following
+ * animations and replay rendering. For road moves the path is [from, to]; for
+ * rail slides the path enumerates the intermediate rail cells (including any
+ * curve corners). The function is best-effort — if no rail path is found, the
+ * straight-line [from, to] is returned as a fallback.
+ *
+ * Note: this re-derives the path; the engine's combat resolution still happens
+ * inside applyMove. We do not have access to MoveContext here, so we walk every
+ * rail direction and pick whichever direction's slide arrives at `to`.
+ */
+export function pathOfMove(fromCellId: string, toCellId: string): string[] {
+  const from = getCell(fromCellId);
+  // Road step?
+  if (getRoadNeighbors(fromCellId).includes(toCellId)) {
+    return [fromCellId, toCellId];
+  }
+  // Rail slide: try each direction; if the reached cell list contains toCellId
+  // we return the prefix up to and including it.
+  if (from.onRail) {
+    for (const dir of DIRECTIONS) {
+      const trail = walkRail(fromCellId, dir);
+      const idx = trail.indexOf(toCellId);
+      if (idx >= 0) return [fromCellId, ...trail.slice(0, idx + 1)];
+    }
+  }
+  return [fromCellId, toCellId];
+}
+
+/** Trace a single non-engineer slide direction including curve exits. */
+function walkRail(fromCellId: string, dir: Direction): string[] {
+  const path: string[] = [];
+  let current = fromCellId;
+  let currentDir = dir;
+  // Cap iterations to avoid pathological loops.
+  for (let i = 0; i < 50; i++) {
+    const nextId = getRailNeighbor(current, currentDir);
+    if (!nextId) return path;
+    path.push(nextId);
+    const curveExit = CORNER_CURVE_EXITS[nextId]?.[currentDir];
+    if (curveExit) currentDir = curveExit;
+    current = nextId;
+  }
+  return path;
 }
 
 function bfsRail(
@@ -144,7 +222,7 @@ function bfsRail(
         if (next.type !== 'CAMP') out.add(nextId);
         continue;
       }
-      out.add(nextId);
+      if (!next.transitOnly) out.add(nextId);
       queue.push(nextId);
     }
   }
