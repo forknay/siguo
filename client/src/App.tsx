@@ -10,8 +10,9 @@ export function App() {
   const phase = useGame((s) => s.phase);
   const [bootError, setBootError] = useState<string | null>(null);
 
-  // Replay mode: read ?replay=<encoded> from URL. Skips the websocket connect.
-  const replayPayload = useMemo(() => {
+  // Replay mode: either the URL has ?replay=<encoded>, or the user pasted a
+  // payload into the "Watch replay" tab on Landing. Either way, skip the socket.
+  const urlReplayPayload = useMemo(() => {
     try {
       const params = new URLSearchParams(window.location.search);
       return params.get('replay');
@@ -19,6 +20,8 @@ export function App() {
       return null;
     }
   }, []);
+  const pastedReplay = useGame((s) => s.pastedReplay);
+  const replayPayload = pastedReplay ?? urlReplayPayload;
 
   useEffect(() => {
     if (replayPayload) return; // replay mode doesn't connect to the server
@@ -28,7 +31,7 @@ export function App() {
   }, [replayPayload]);
 
   if (replayPayload) {
-    return <Replay encoded={decodeURIComponent(replayPayload)} />;
+    return <Replay encoded={replayPayload} />;
   }
 
   if (bootError) {

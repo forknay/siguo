@@ -34,6 +34,18 @@ pnpm dev
 
 ### Hosting on your LAN
 
+`pnpm dev` actually starts **two** servers:
+
+- the API/socket server on `:3000`, which serves whatever is in `client/dist/` (the last `pnpm build`)
+- the Vite dev server on `:5173`, which serves your current source with hot reload
+
+So during development:
+
+- **Share the `:5173` URL** (`http://<your-lan-ip>:5173`) — friends see your live edits with no rebuild step. Vite is bound to `0.0.0.0` and proxies sockets back to the API server.
+- **Share the `:3000` URL** — friends see whatever was in `client/dist/` at the last `pnpm build`. If you make changes, run `pnpm build` again and tell them to hard-refresh.
+
+For "production-style" hosting (single port, no dev server overhead):
+
 ```sh
 pnpm build      # typecheck and build the client into client/dist
 pnpm start      # server serves the built client at :3000
@@ -46,7 +58,11 @@ siguo server listening on http://0.0.0.0:3000
   LAN: http://192.168.1.42:3000
 ```
 
-Anyone on the same Wi-Fi can open that URL and join the room with the 4-character code shown in the lobby.
+Anyone on the same Wi-Fi can open the URL and join the room with the 4-character code shown in the lobby.
+
+### Replays
+
+After a game ends, click **Generate replay link** in the side panel. The server returns a text encoding of the full game (setups + every move), which the client wraps into a URL like `http://<host>/?replay=<encoded>`. Open that URL anywhere (even after the game's room is gone) to step through every move with Prev/Next controls + a scrub bar, and toggle between the four seats' viewing perspectives.
 
 ## Debug mode
 
@@ -100,8 +116,6 @@ For the full rules reference used to drive the engine, see [the rules spec](../.
 
 ## Known gaps (deferred for v2)
 
-- Smarter bot (currently uniform random). Engine has a swap-in interface.
-- Variant toggles UI (engine is parameterized; canonical rules are hardcoded for now).
-- Chat UI (server broadcasts chat messages but there's no input panel — talk to each other in person for now).
-- Draw offer (resignation is enough for v1).
-- Board rotation per viewer (your zone always shows in its absolute position — color identifies you).
+- Variant toggles in the lobby (the engine is parameterized; UI currently shows the locked v1 defaults but doesn't let you flip them yet).
+- Path-following move animations (current animations tween straight A→B; the `pathOfMove` engine helper exists so a future PR can chain transforms along the real rail/road path including curve corners).
+- Animations on bot moves at higher speeds (`instant` and `fast` may clip mid-tween).

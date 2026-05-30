@@ -11,7 +11,7 @@ import {
   type SeatId,
   type SeatInfo,
 } from '@siguo/shared';
-import { projectView } from '@siguo/shared';
+import { projectView, encodeGame } from '@siguo/shared';
 import type { CombatReveal, LobbyUpdate, ServerMessage } from '@siguo/shared';
 import { randomValidSetup } from '@siguo/shared';
 
@@ -262,9 +262,6 @@ export class Room {
   /** Build a replay text payload from the current state + setup snapshot. */
   buildReplayString(): string | null {
     if (!this.state || !this.setupSnapshot) return null;
-    // Use the imported encodeGame lazily to avoid a circular dep at module load.
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { encodeGame } = require('@siguo/shared') as typeof import('@siguo/shared');
     return encodeGame(this.setupSnapshot, this.mode, this.state.moveHistory);
   }
 }

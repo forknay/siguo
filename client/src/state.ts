@@ -42,6 +42,9 @@ interface GameStore {
   lastError: string | null;
   /** Server-provided replay text (received after RequestReplay). */
   replayText: string | null;
+  /** Pasted replay text the user wants to watch right now. When set, App
+   *  renders the Replay screen with this payload. */
+  pastedReplay: string | null;
 
   // actions
   connect: () => Promise<void>;
@@ -84,6 +87,7 @@ export const useGame = create<GameStore>((set, get) => ({
   chatLog: [],
   lastError: null,
   replayText: null,
+  pastedReplay: null,
 
   connect: async () => {
     if (get().socket) return;

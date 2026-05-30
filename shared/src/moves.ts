@@ -116,23 +116,50 @@ function slideRail(
     if (!nextId) return;
     const next = getCell(nextId);
     const occupant = ctx.pieceAt(nextId);
+    const curveExitDir = CORNER_CURVE_EXITS[nextId]?.[currentDir];
     if (occupant) {
-      if (ctx.isAlly(occupant.owner, mover.owner)) return; // blocked
+      // Corner-curve cells (C-1-1, C-1-3, C-3-1, C-3-3) host TWO logical roads:
+      // the regular rail through the corner cell AND the curved highway that
+      // bypasses it. A piece sitting on the corner cell occupies the rail-road
+      // but does NOT block the curve. So: combat/block applies normally on the
+      // corner road, but the curve continuation fires regardless.
+      if (curveExitDir) {
+        if (!ctx.isAlly(occupant.owner, mover.owner) && next.type !== 'CAMP') {
+          out.add(nextId);
+        }
+        slideRail(ctx, mover, nextId, curveExitDir, out);
+        return;
+      }
+      if (ctx.isAlly(occupant.owner, mover.owner)) return;
       if (next.type !== 'CAMP') out.add(nextId);
       return;
     }
     // Empty cell — legal stop unless it's a transit-only junction (C-2-2).
     if (!next.transitOnly) out.add(nextId);
-    // If `next` is a curve corner cell entered in a direction that the curve
-    // accepts, fork a new slide from this cell in the curve-exit direction. The
-    // original straight slide also continues below.
-    const curveExitDir = CORNER_CURVE_EXITS[nextId]?.[currentDir];
+    // Empty corner cell — fork into the curve direction as before.
     if (curveExitDir) {
       slideRail(ctx, mover, nextId, curveExitDir, out);
     }
     current = nextId;
   }
 }
+
+/**
+ * Curve-bypass edges: pairs of zone front-line cells that are connected via the
+ * curved highway through a corner cell. These edges exist independently of the
+ * corner cell's occupancy, so engineers can traverse them even when the corner
+ * is blocked. Used by the engineer rail BFS.
+ */
+const CURVE_BYPASSES: Record<string, string[]> = {
+  'W-6-5': ['N-6-1'],
+  'N-6-1': ['W-6-5'],
+  'N-6-5': ['E-6-1'],
+  'E-6-1': ['N-6-5'],
+  'W-6-1': ['S-6-5'],
+  'S-6-5': ['W-6-1'],
+  'E-6-5': ['S-6-1'],
+  'S-6-1': ['E-6-5'],
+};
 
 /**
  * Corner cells of the central 3×3 rail grid are visually rendered as smooth
@@ -207,23 +234,32 @@ function bfsRail(
 ): void {
   const visited = new Set<string>([fromCellId]);
   const queue: string[] = [fromCellId];
+  const visit = (nextId: string) => {
+    if (visited.has(nextId)) return;
+    visited.add(nextId);
+    const next = getCell(nextId);
+    const occupant = ctx.pieceAt(nextId);
+    if (occupant) {
+      if (ctx.isAlly(occupant.owner, mover.owner)) return;
+      if (next.type !== 'CAMP') out.add(nextId);
+      return;
+    }
+    if (!next.transitOnly) out.add(nextId);
+    queue.push(nextId);
+  };
   while (queue.length > 0) {
     const cur = queue.shift()!;
     const rails = BOARD.rails.get(cur);
-    if (!rails) continue;
-    for (const dir of DIRECTIONS) {
-      const nextId = rails[dir];
-      if (!nextId || visited.has(nextId)) continue;
-      visited.add(nextId);
-      const next = getCell(nextId);
-      const occupant = ctx.pieceAt(nextId);
-      if (occupant) {
-        if (ctx.isAlly(occupant.owner, mover.owner)) continue;
-        if (next.type !== 'CAMP') out.add(nextId);
-        continue;
+    if (rails) {
+      for (const dir of DIRECTIONS) {
+        const nextId = rails[dir];
+        if (nextId) visit(nextId);
       }
-      if (!next.transitOnly) out.add(nextId);
-      queue.push(nextId);
+    }
+    // Curve-bypass edges: independent of corner-cell occupancy.
+    const bypasses = CURVE_BYPASSES[cur];
+    if (bypasses) {
+      for (const nextId of bypasses) visit(nextId);
     }
   }
 }

@@ -201,21 +201,39 @@ export function Play() {
 function ReplayShareButton() {
   const send = useGame((s) => s.send);
   const replayText = useGame((s) => s.replayText);
+  const [copied, setCopied] = useState(false);
+
   if (!replayText) {
     return (
       <button style={{ marginTop: '0.5rem' }} onClick={() => send({ type: 'RequestReplay' })}>
-        Generate replay link
+        Generate replay code
       </button>
     );
   }
-  const url = `${window.location.origin}/?replay=${encodeURIComponent(replayText)}`;
+
+  function copy() {
+    navigator.clipboard?.writeText(replayText ?? '').then(
+      () => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      },
+      () => { /* ignore */ },
+    );
+  }
+
   return (
     <div className="col" style={{ marginTop: '0.5rem', gap: '0.3rem' }}>
-      <div className="muted" style={{ fontSize: 12 }}>Replay link (paste anywhere):</div>
-      <textarea readOnly value={url} style={{ fontSize: 10, fontFamily: 'monospace' }} rows={4} />
-      <button onClick={() => navigator.clipboard?.writeText(url).catch(() => {})}>
-        Copy to clipboard
-      </button>
+      <div className="muted" style={{ fontSize: 12 }}>
+        Replay code — paste this into the "Watch replay" tab on the landing screen, or share it.
+      </div>
+      <textarea
+        readOnly
+        value={replayText}
+        style={{ fontSize: 10, fontFamily: 'monospace', resize: 'vertical' }}
+        rows={5}
+        onFocus={(e) => e.currentTarget.select()}
+      />
+      <button onClick={copy}>{copied ? 'Copied ✓' : 'Copy to clipboard'}</button>
     </div>
   );
 }

@@ -7,10 +7,11 @@ export function Landing() {
   const lastError = useGame((s) => s.lastError);
   const clearError = useGame((s) => s.clearError);
   const debug = useGame((s) => s.debug);
-  const [tab, setTab] = useState<'create' | 'join'>('create');
+  const [tab, setTab] = useState<'create' | 'join' | 'replay'>('create');
   const [name, setName] = useState('Player');
   const [mode, setMode] = useState<GameMode>('2v2');
   const [code, setCode] = useState('');
+  const [replayCode, setReplayCode] = useState('');
 
   return (
     <div className="screen-center">
@@ -22,11 +23,33 @@ export function Landing() {
             🔍 Debug mode (opponent pieces will be revealed)
           </div>
         )}
-        <div className="row">
+        <div className="row" style={{ flexWrap: 'wrap' }}>
           <button onClick={() => setTab('create')} disabled={tab === 'create'}>Create game</button>
           <button onClick={() => setTab('join')} disabled={tab === 'join'}>Join game</button>
+          <button onClick={() => setTab('replay')} disabled={tab === 'replay'}>Watch replay</button>
         </div>
-        {tab === 'create' ? (
+        {tab === 'replay' ? (
+          <>
+            <label className="col">
+              <span className="muted">Paste a replay code (the SIGUO|… text someone shared)</span>
+              <textarea
+                value={replayCode}
+                onChange={(e) => setReplayCode(e.target.value)}
+                rows={6}
+                placeholder="SIGUO|v=1|mode=2v2&#10;SETUP|N|…&#10;…"
+                style={{ fontFamily: 'monospace', fontSize: 11 }}
+              />
+            </label>
+            <button
+              disabled={replayCode.trim().length === 0}
+              onClick={() => {
+                useGame.setState({ pastedReplay: replayCode.trim() });
+              }}
+            >
+              Load replay
+            </button>
+          </>
+        ) : tab === 'create' ? (
           <>
             <label className="col">
               <span className="muted">Your name</span>

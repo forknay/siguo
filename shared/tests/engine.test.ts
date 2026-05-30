@@ -225,6 +225,67 @@ describe('team win', () => {
   });
 });
 
+describe('dead pieces do not interfere with movement', () => {
+  function craftedState(
+    pieces: Array<{ cell: string; owner: SeatId; kind: import('../src/pieces.js').PieceKind }>,
+    eliminatedSeats: SeatId[] = [],
+    turn: SeatId = 'N',
+  ): GameState {
+    const state = freshState('2v2');
+    let counter = 0;
+    const newPieces: GameState['pieces'] = {};
+    const cellIndex: GameState['cellIndex'] = {};
+    const knownToPlayers: GameState['knownToPlayers'] = {};
+    for (const p of pieces) {
+      counter += 1;
+      const id = `c${counter}`;
+      newPieces[id] = { id, kind: p.kind, owner: p.owner, cellId: p.cell };
+      cellIndex[p.cell] = id;
+      knownToPlayers[id] = [p.owner];
+    }
+    const seats = { ...state.seats };
+    for (const s of eliminatedSeats) {
+      seats[s] = { ...seats[s], eliminated: true };
+    }
+    return {
+      ...state,
+      pieces: newPieces,
+      cellIndex,
+      knownToPlayers,
+      seats: { ...seats, N: { ...seats.N, setupReady: true }, E: { ...seats.E, setupReady: true }, S: { ...seats.S, setupReady: true }, W: { ...seats.W, setupReady: true } },
+      phase: 'PLAYING',
+      turn,
+    };
+  }
+
+  it('legal moves ignore eliminated-owner pieces', () => {
+    // N piece next to a dead E piece — legal moves should treat the cell as empty.
+    const state = craftedState([
+      { cell: zoneCellId('N', 6, 3), owner: 'N', kind: 'LIANZHANG' },
+      { cell: zoneCellId('S', 6, 1), owner: 'E', kind: 'TUANZHANG' }, // dead E
+    ], ['E']);
+    const moves = legalMoves(state, zoneCellId('N', 6, 3));
+    // Sliding south from N(6,3) passes through C-1-2/C-2-2/C-3-2 to S(6,3); the dead
+    // E piece at S(6,1) doesn't matter for this row but pieceAt should return null.
+    expect(moves.includes(zoneCellId('S', 6, 3))).toBe(true);
+  });
+
+  it('moving onto a dead piece silently removes it (no combat)', () => {
+    const state = craftedState([
+      { cell: zoneCellId('N', 2, 3), owner: 'N', kind: 'LIANZHANG' },
+      { cell: zoneCellId('N', 2, 4), owner: 'E', kind: 'SILING' }, // dead E
+    ], ['E']);
+    const r = applyMove(state, 'N', zoneCellId('N', 2, 3), zoneCellId('N', 2, 4));
+    expect('state' in r).toBe(true);
+    const next = (r as { state: GameState }).state;
+    // No combat happened; the live piece now sits on the cell, dead piece gone.
+    expect(next.lastCombat).toBeNull();
+    const occupant = pieceAt(next, zoneCellId('N', 2, 4));
+    expect(occupant?.owner).toBe('N');
+    expect(occupant?.kind).toBe('LIANZHANG');
+  });
+});
+
 describe('resign + FFA', () => {
   it('FFA: last seat standing wins', () => {
     let state = startWithRandomSetup('ffa', 500);

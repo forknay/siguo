@@ -92,23 +92,40 @@ export function Lobby() {
         </div>
 
         {isHost && (
-          <div className="row" style={{ gap: '0.5rem', alignItems: 'center' }}>
-            <span className="muted" style={{ fontSize: 12 }}>Bot speed:</span>
-            {(['slow', 'normal', 'fast', 'instant'] as BotSpeed[]).map((spd) => (
-              <button
-                key={spd}
-                onClick={() => send({ type: 'SetRoomConfig', botSpeed: spd })}
-                style={{
-                  fontSize: 11,
-                  padding: '0.2rem 0.5rem',
-                  background: lobby.botSpeed === spd ? 'var(--accent)' : 'var(--bg-elev)',
-                  color: lobby.botSpeed === spd ? '#0e1530' : 'var(--text)',
-                  fontWeight: lobby.botSpeed === spd ? 700 : 400,
-                }}
-              >
-                {spd}
-              </button>
-            ))}
+          <div className="col" style={{ gap: '0.5rem' }}>
+            <div className="row" style={{ gap: '0.5rem', alignItems: 'center' }}>
+              <span className="muted" style={{ fontSize: 12 }}>Bot speed:</span>
+              {(['slow', 'normal', 'fast', 'instant'] as BotSpeed[]).map((spd) => (
+                <button
+                  key={spd}
+                  onClick={() => send({ type: 'SetRoomConfig', botSpeed: spd })}
+                  style={{
+                    fontSize: 11,
+                    padding: '0.2rem 0.5rem',
+                    background: lobby.botSpeed === spd ? 'var(--accent)' : 'var(--bg-elev)',
+                    color: lobby.botSpeed === spd ? '#0e1530' : 'var(--text)',
+                    fontWeight: lobby.botSpeed === spd ? 700 : 400,
+                  }}
+                >
+                  {spd}
+                </button>
+              ))}
+            </div>
+            <details>
+              <summary className="muted" style={{ fontSize: 12, cursor: 'pointer' }}>
+                Variants (v1: locked to canonical rules)
+              </summary>
+              <div className="col" style={{ gap: '0.2rem', fontSize: 11, padding: '0.4rem 0', color: 'var(--muted)' }}>
+                <div>• Rail corners: engineers-only (non-engineer curve = banked curves only)</div>
+                <div>• Mine survives non-engineer attack (mine stays on board)</div>
+                <div>• HQ-immobility ON · Marshal-death triggers flag-reveal</div>
+                <div>• Stalemate at 70 moves without capture</div>
+                <div>• Eliminated player's pieces stay as frozen obstacles</div>
+                <div style={{ color: 'var(--accent)', marginTop: 4 }}>
+                  Toggles for these will live here in a future version — the engine is parameterized internally.
+                </div>
+              </div>
+            </details>
           </div>
         )}
 

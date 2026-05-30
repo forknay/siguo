@@ -177,13 +177,19 @@ export function submitSetup(
   };
 }
 
-/** Build a MoveContext from the current GameState. */
+/** Build a MoveContext from the current GameState.
+ *
+ *  Eliminated players' pieces are treated as INVISIBLE for movement purposes:
+ *  slides pass through them, road moves can land on them, no combat triggers.
+ *  This implements TODO "dead pieces should not interfere with movement."
+ */
 export function moveContextFor(state: GameState): MoveContext {
   return {
     pieceAt: (cellId) => {
       const pid = state.cellIndex[cellId];
       if (!pid) return null;
       const p = state.pieces[pid]!;
+      if (state.seats[p.owner].eliminated) return null;
       return { id: p.id, cellId: p.cellId, kind: p.kind, owner: p.owner } satisfies PieceRef;
     },
     isAlly: (a, b) => isAlly(state, a, b),
@@ -242,7 +248,11 @@ export function applyMove(
   if (!legal.includes(to)) return { error: `Illegal destination ${to}` };
 
   // Apply the move (possibly with combat).
-  const target = pieceAt(state, to);
+  const rawTarget = pieceAt(state, to);
+  // Frozen (dead-owner) pieces don't fight — they're silently removed when a
+  // live piece lands on them, so movement isn't impeded by abandoned obstacles.
+  const targetIsFrozen = rawTarget ? state.seats[rawTarget.owner].eliminated : false;
+  const target = rawTarget && !targetIsFrozen ? rawTarget : null;
   let newPieces = { ...state.pieces };
   let newCellIndex = { ...state.cellIndex };
   let newKnown = { ...state.knownToPlayers };
@@ -253,7 +263,10 @@ export function applyMove(
   const eliminatedSeats: SeatId[] = [];
 
   if (!target) {
-    // Plain move into an empty cell.
+    // Plain move into an empty (or frozen-only) cell. Clear any frozen piece.
+    if (targetIsFrozen && rawTarget) {
+      delete newPieces[rawTarget.id];
+    }
     delete newCellIndex[from];
     newCellIndex[to] = piece.id;
     newPieces[piece.id] = { ...piece, cellId: to };

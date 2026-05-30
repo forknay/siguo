@@ -11,6 +11,7 @@ import {
   type SeatId,
 } from '@siguo/shared';
 import { Board, SEAT_COLORS } from '../components/Board.js';
+import { useGame } from '../state.js';
 
 interface Props {
   encoded: string;
@@ -111,7 +112,21 @@ export function Replay({ encoded }: Props) {
         </div>
 
         <div style={{ marginTop: 'auto' }}>
-          <a href="/">← Back to lobby</a>
+          <button
+            onClick={() => {
+              // Clear pasted replay state and URL param if present.
+              const url = new URL(window.location.href);
+              if (url.searchParams.has('replay')) {
+                url.searchParams.delete('replay');
+                window.history.replaceState({}, '', url.toString());
+              }
+              useGame.setState({ pastedReplay: null });
+              // Force a re-render of App by triggering the effect dep.
+              window.location.reload();
+            }}
+          >
+            ← Back to lobby
+          </button>
         </div>
       </div>
     </div>

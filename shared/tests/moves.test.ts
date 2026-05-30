@@ -283,6 +283,42 @@ describe('central-corner curves (non-engineer)', () => {
   });
 });
 
+describe('curve bypasses a piece sitting on the corner cell', () => {
+  it('non-engineer slide curves around an enemy on C-1-1', () => {
+    // W slides east from W(6,5); an enemy sits on the corner cell C-1-1.
+    // Standard corner road: combat at C-1-1 is legal.
+    // Curve road: bypasses C-1-1 and reaches N(6,1).
+    const ctx = ctxFromMap({
+      [zoneCellId('W', 6, 5)]: { owner: 'W', kind: 'LIANZHANG' },
+      'C-1-1':                  { owner: 'N', kind: 'PAIZHANG' },
+    });
+    const moves = new Set(legalMovesFromCell(ctx, zoneCellId('W', 6, 5)));
+    expect(moves.has('C-1-1')).toBe(true);                  // combat target on corner
+    expect(moves.has(zoneCellId('N', 6, 1))).toBe(true);    // curve bypasses
+    expect(moves.has(zoneCellId('N', 2, 1))).toBe(true);    // and continues north
+  });
+
+  it('non-engineer slide curves around even when corner has a teammate', () => {
+    const allies: Record<SeatId, SeatId[]> = { N: ['N', 'W'], W: ['N', 'W'], E: ['E', 'S'], S: ['E', 'S'] };
+    const ctx = ctxFromMap({
+      [zoneCellId('W', 6, 5)]: { owner: 'W', kind: 'LIANZHANG' },
+      'C-1-1':                  { owner: 'N', kind: 'PAIZHANG' }, // ally
+    }, allies);
+    const moves = new Set(legalMovesFromCell(ctx, zoneCellId('W', 6, 5)));
+    expect(moves.has('C-1-1')).toBe(false);                 // blocked by ally on corner
+    expect(moves.has(zoneCellId('N', 6, 1))).toBe(true);    // curve still passes
+  });
+
+  it('engineer can still reach across the curve when corner is blocked', () => {
+    const ctx = ctxFromMap({
+      [zoneCellId('W', 6, 5)]: { owner: 'W', kind: 'GONGBING' },
+      'C-1-1':                  { owner: 'W', kind: 'PAIZHANG' }, // own ally blocks corner
+    });
+    const moves = new Set(legalMovesFromCell(ctx, zoneCellId('W', 6, 5)));
+    expect(moves.has(zoneCellId('N', 6, 1))).toBe(true);
+  });
+});
+
 describe('camp interactions', () => {
   it('cannot attack into a camp containing an enemy', () => {
     const ctx = ctxFromMap({
