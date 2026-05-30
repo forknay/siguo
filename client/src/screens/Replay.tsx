@@ -43,11 +43,31 @@ export function Replay({ encoded }: Props) {
     );
   }
 
-  const initial = useMemo(() => buildReplayInitialState(decoded), [decoded]);
+  const initial = useMemo(() => {
+    try { return { state: buildReplayInitialState(decoded) }; }
+    catch (e) { return { error: e instanceof Error ? e.message : String(e) }; }
+  }, [decoded]);
   const totalSteps = decoded.moves.length;
-  const state = useMemo(() => applyMovesUpTo(initial, decoded.moves, step), [initial, decoded, step]);
+  const stateResult = useMemo(() => {
+    if ('error' in initial) return initial;
+    try { return { state: applyMovesUpTo(initial.state, decoded.moves, step) }; }
+    catch (e) { return { error: e instanceof Error ? e.message : String(e) }; }
+  }, [initial, decoded, step]);
+
+  if ('error' in stateResult) {
+    return (
+      <div className="screen-center">
+        <div className="card">
+          <h2>Replay error at step {step}</h2>
+          <pre style={{ fontSize: 11 }}>{stateResult.error}</pre>
+          <button onClick={() => setStep(Math.max(0, step - 1))}>← Step back</button>
+        </div>
+      </div>
+    );
+  }
+
   // Replays show all pieces (no fog) — debug-style view.
-  const view = projectView(state, viewerSeat, { debug: true });
+  const view = projectView(stateResult.state, viewerSeat, { debug: true });
 
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 280px', height: '100vh', position: 'relative' }}>

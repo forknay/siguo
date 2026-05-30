@@ -75,6 +75,7 @@ export const SetRoomConfigMsg = z.object({
 });
 
 export const RequestReplayMsg = z.object({ type: z.literal('RequestReplay') });
+export const ReturnToLobbyMsg = z.object({ type: z.literal('ReturnToLobby') });
 
 export const ClientMessage = z.discriminatedUnion('type', [
   CreateRoomMsg,
@@ -90,6 +91,7 @@ export const ClientMessage = z.discriminatedUnion('type', [
   ChatMsg,
   SetRoomConfigMsg,
   RequestReplayMsg,
+  ReturnToLobbyMsg,
 ]);
 export type ClientMessage = z.infer<typeof ClientMessage>;
 

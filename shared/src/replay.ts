@@ -43,6 +43,33 @@ const CHAR_TO_KIND: Record<string, PieceKind> = (() => {
   return m;
 })();
 
+/**
+ * Single-zone setup encoding. The encoded string is "SIGUOSET|v=1|<25 chars>"
+ * where the chars use PIECE_CHAR ordered by setupCellsForZone('N'). The actual
+ * seat the layout is for is irrelevant — the 25-char ordering is the same for
+ * every zone because setupCellsForZone is canonical, and the engine adapts the
+ * placement to the receiving seat's cells.
+ */
+const LAYOUT_HEADER = 'SIGUOSET|v=1';
+
+export function encodeSetupLayout(seat: SeatId, layout: Layout): string {
+  return `${LAYOUT_HEADER}|${encodeLayoutForZone(seat, layout)}`;
+}
+
+export function decodeSetupLayout(text: string, targetSeat: SeatId): Layout {
+  const stripped = text.trim();
+  if (!stripped.startsWith(LAYOUT_HEADER)) {
+    // Tolerant: also accept just the 25-char string with no header.
+    if (stripped.length === 25 && /^[A-Z]{25}$/.test(stripped)) {
+      return decodeLayoutForZone(targetSeat, stripped);
+    }
+    throw new Error('Not a SIGUOSET layout');
+  }
+  const parts = stripped.split('|');
+  const chars = parts[parts.length - 1] ?? '';
+  return decodeLayoutForZone(targetSeat, chars);
+}
+
 function encodeLayoutForZone(seat: SeatId, layout: Layout): string {
   return setupCellsForZone(seat).map((c) => {
     const kind = layout[c.id];
@@ -146,13 +173,26 @@ export function buildReplayInitialState(encoded: EncodedGame): GameState {
   return state;
 }
 
-/** Step forward N moves from the initial state, returning the new state. */
+/** Step forward N moves from the initial state, returning the new state.
+ *
+ *  Robust against trailing moves once the game has ENDED (e.g. a recorded move
+ *  after a flag capture would be rejected by applyMove). We stop cleanly at
+ *  game end instead of throwing — the caller can still scrub all the way to
+ *  the final state.
+ */
 export function applyMovesUpTo(initial: GameState, allMoves: EncodedGame['moves'], n: number): GameState {
   let state = initial;
   for (let i = 0; i < Math.min(n, allMoves.length); i++) {
+    if (state.phase !== 'PLAYING') break;
     const m = allMoves[i]!;
     const r = applyMove(state, m.seat, m.from, m.to);
-    if ('error' in r) throw new Error(`Replay move ${i} error: ${r.error}`);
+    if ('error' in r) {
+      // Skip this move rather than crash the replay. The state still reflects
+      // every move up to the failure point.
+      // eslint-disable-next-line no-console
+      console.warn(`Replay skip move ${i}: ${r.error}`);
+      continue;
+    }
     state = r.state;
   }
   return state;

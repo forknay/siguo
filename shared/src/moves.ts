@@ -182,31 +182,78 @@ const CORNER_CURVE_EXITS: Record<string, Partial<Record<Direction, Direction>>> 
 
 /**
  * Reconstruct the ordered list of cells a move traverses, for path-following
- * animations and replay rendering. For road moves the path is [from, to]; for
- * rail slides the path enumerates the intermediate rail cells (including any
- * curve corners). The function is best-effort — if no rail path is found, the
- * straight-line [from, to] is returned as a fallback.
+ * animations and replay rendering.
  *
- * Note: this re-derives the path; the engine's combat resolution still happens
- * inside applyMove. We do not have access to MoveContext here, so we walk every
- * rail direction and pick whichever direction's slide arrives at `to`.
+ *   - Road step? returns [from, to].
+ *   - Rail slide (non-engineer): walks each direction; if the reached cell list
+ *     contains the destination, returns the prefix up to it (handles curve corners).
+ *   - Rail BFS (engineer): if no straight slide found, runs a BFS over rail edges
+ *     + curve bypasses to find the SHORTEST rail path. Returns the path with
+ *     intermediate cells included.
+ *
+ * Falls back to [from, to] if nothing matches (caller can still animate straight).
  */
 export function pathOfMove(fromCellId: string, toCellId: string): string[] {
   const from = getCell(fromCellId);
+  if (fromCellId === toCellId) return [fromCellId];
+
   // Road step?
   if (getRoadNeighbors(fromCellId).includes(toCellId)) {
     return [fromCellId, toCellId];
   }
-  // Rail slide: try each direction; if the reached cell list contains toCellId
-  // we return the prefix up to and including it.
+
+  // Single-direction rail slide?
   if (from.onRail) {
     for (const dir of DIRECTIONS) {
       const trail = walkRail(fromCellId, dir);
       const idx = trail.indexOf(toCellId);
       if (idx >= 0) return [fromCellId, ...trail.slice(0, idx + 1)];
     }
+    // Engineer multi-leg BFS — find shortest rail-path including curve bypasses.
+    const bfsPath = railShortestPath(fromCellId, toCellId);
+    if (bfsPath) return bfsPath;
   }
+
   return [fromCellId, toCellId];
+}
+
+/** BFS along rail edges + CURVE_BYPASSES to find the shortest cell path. */
+function railShortestPath(fromCellId: string, toCellId: string): string[] | null {
+  const parents = new Map<string, string | null>([[fromCellId, null]]);
+  const queue: string[] = [fromCellId];
+  while (queue.length > 0) {
+    const cur = queue.shift()!;
+    if (cur === toCellId) {
+      // Reconstruct.
+      const path: string[] = [];
+      let n: string | null = cur;
+      while (n !== null) {
+        path.unshift(n);
+        n = parents.get(n) ?? null;
+      }
+      return path;
+    }
+    const rails = BOARD.rails.get(cur);
+    if (rails) {
+      for (const dir of DIRECTIONS) {
+        const next = rails[dir];
+        if (next && !parents.has(next)) {
+          parents.set(next, cur);
+          queue.push(next);
+        }
+      }
+    }
+    const bypasses = CURVE_BYPASSES[cur];
+    if (bypasses) {
+      for (const next of bypasses) {
+        if (!parents.has(next)) {
+          parents.set(next, cur);
+          queue.push(next);
+        }
+      }
+    }
+  }
+  return null;
 }
 
 /** Trace a single non-engineer slide direction including curve exits. */

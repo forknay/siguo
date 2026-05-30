@@ -4,6 +4,7 @@ import { Lobby } from './screens/Lobby.js';
 import { Setup } from './screens/Setup.js';
 import { Play } from './screens/Play.js';
 import { Replay } from './screens/Replay.js';
+import { Designer } from './screens/Designer.js';
 import { useGame } from './state.js';
 
 export function App() {
@@ -21,17 +22,23 @@ export function App() {
     }
   }, []);
   const pastedReplay = useGame((s) => s.pastedReplay);
+  const designerMode = useGame((s) => s.designerMode);
   const replayPayload = pastedReplay ?? urlReplayPayload;
 
   useEffect(() => {
     if (replayPayload) return; // replay mode doesn't connect to the server
+    if (designerMode) return;  // designer mode doesn't connect either
     useGame.getState().connect().catch((err: unknown) => {
       setBootError(err instanceof Error ? err.message : String(err));
     });
-  }, [replayPayload]);
+  }, [replayPayload, designerMode]);
 
   if (replayPayload) {
     return <Replay encoded={replayPayload} />;
+  }
+
+  if (designerMode) {
+    return <Designer />;
   }
 
   if (bootError) {

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   legalMovesFromCell,
+  pathOfMove,
   type MoveContext,
   type PieceRef,
   type SeatId,
@@ -215,6 +216,32 @@ describe('engineer rail BFS', () => {
         expect(moves.has(centerCellId(r, c))).toBe(expected);
       }
     }
+  });
+});
+
+describe('pathOfMove', () => {
+  it('road step returns [from, to]', () => {
+    expect(pathOfMove(zoneCellId('N', 3, 3), zoneCellId('N', 3, 4))).toEqual([
+      zoneCellId('N', 3, 3),
+      zoneCellId('N', 3, 4),
+    ]);
+  });
+
+  it('single-direction rail slide enumerates intermediate cells', () => {
+    const path = pathOfMove(zoneCellId('N', 6, 3), zoneCellId('S', 6, 3));
+    expect(path[0]).toBe(zoneCellId('N', 6, 3));
+    expect(path[path.length - 1]).toBe(zoneCellId('S', 6, 3));
+    expect(path).toContain(centerCellId(1, 2));
+    expect(path).toContain(centerCellId(2, 2));
+    expect(path).toContain(centerCellId(3, 2));
+  });
+
+  it('engineer BFS finds a multi-leg rail path through corners', () => {
+    // N(2,3) → N(5,1) requires going west to corner (2,1) then south. BFS path.
+    const path = pathOfMove(zoneCellId('N', 2, 3), zoneCellId('N', 5, 1));
+    expect(path[0]).toBe(zoneCellId('N', 2, 3));
+    expect(path[path.length - 1]).toBe(zoneCellId('N', 5, 1));
+    expect(path).toContain(zoneCellId('N', 2, 1));
   });
 });
 

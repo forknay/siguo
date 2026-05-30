@@ -2,11 +2,12 @@
 
 - [x] A piece on a corner of a center should not impede on the curved highway (they are two different roads)
 - [x] Dead pieces should not interfere with movement
-- [ ] Saved setup layouts — designer screen + encoding + paste at match start (#39)
-- [ ] "Back to lobby" button after a game ends, with server-side room reset (#40)
-- [ ] Engineer animation follows multi-leg rail BFS path, not straight A→B (#41)
+- [x] Saved setup layouts — designer screen + encoding + paste at match start (#39)
+- [x] "Back to lobby" button after a game ends, with server-side room reset (#40)
+- [x] Engineer animation follows multi-leg rail BFS path, not straight A→B (#41)
+- [x] Smarter bot piece placement — 排长/连长 in non-flag HQ + heavyweights in interior rows + mines clustered near flag (#42)
 
-## Test inventory (82 passing)
+## Test inventory (89 passing)
 
 All tests live under `shared/tests/` and run with `pnpm test`.
 
@@ -31,16 +32,18 @@ All tests live under `shared/tests/` and run with `pnpm test`.
 - Non-rail cells have no rail neighbors
 - `setupCellsForZone` returns 25 placeable cells per zone
 
-### `setup.test.ts` — setup validation (7 tests)
+### `setup.test.ts` — setup validation + smart bot setup (11 tests)
 - Random setup produces 25 placements covering all placeable cells
 - Random setup passes validation for every zone × multiple seeds
-- Deterministic given a seed
+- Random setup is deterministic given a seed
 - Flag must be in an HQ
 - Mine must be in rows 1–2
 - Bomb cannot be in front line (row 6)
 - Correct piece counts
+- **smartValidSetup (#42, 4 tests)**: produces a fully valid layout for every zone × multiple seeds; never places top-3 ranks on the HQ row; non-flag HQ holds 排长 or 连长 (never engineer / mine / heavyweight); deterministic given a seed
 
-### `moves.test.ts` — legal moves (26 tests)
+### `moves.test.ts` — legal moves + pathOfMove (29 tests)
+- **pathOfMove (3 tests)**: road step returns [from, to]; single-direction rail slide enumerates intermediate cells through the center; engineer BFS multi-leg path through corners
 - Road moves: single orthogonal step into empty cells
 - Cannot move into a camp containing anyone
 - Center camp diagonals work both ways
@@ -98,14 +101,35 @@ All tests live under `shared/tests/` and run with `pnpm test`.
 
 ## Project task ledger
 
-All 24 tracked tasks completed. See the task tool's history for details. Summary:
+All **28 tracked tasks completed** (#15–#42). The full list:
 
-| Phase | Items |
-|---|---|
-| v1 scaffolding | #15 |
-| Initial iteration on rules + UX | #16, #17 |
-| Engine refinements | #26, #33, #34, #38 (TODO.md) |
-| Server features | #19, #23, #31, #37 |
-| Client UI | #20, #21, #22, #24, #25, #27, #28, #29, #30, #32, #35, #36 |
-| Replay system | #37 |
-| Docs | #18 |
+| # | Status | Title |
+|---|---|---|
+| 15 | ✓ | v1 shipped — engine, server, client, LAN multiplayer, bots |
+| 16 | ✓ | 3×3 stoppable central area + hidden combat + debug mode + bigger board |
+| 17 | ✓ | Smaller piece glyphs + top-left zoom inspector + bottom-left rank guide |
+| 18 | ✓ | Document dev/share workflow so friends see latest code |
+| 19 | ✓ | Bot v2: at least beat random |
+| 20 | ✓ | Board rotation per viewer so own zone sits at the bottom |
+| 21 | ✓ | Chat panel in Lobby and Play screens |
+| 22 | ✓ | Variants UI: expose engine toggles in the lobby |
+| 23 | ✓ | Draw offers + voluntary tie |
+| 24 | ✓ | Move-history / replay log on the side panel |
+| 25 | ✓ | Captured-pieces tray per seat |
+| 26 | ✓ | Central-corner curves passable by all pieces (non-engineer curve rule) |
+| 27 | ✓ | UI centering: shift board right so RankGuide doesn't cover it |
+| 28 | ✓ | Render the central-corner curves visually on the board |
+| 29 | ✓ | Setup: place all of one piece kind without re-picking each time |
+| 30 | ✓ | Animate piece moves A→B + highlight last move per player |
+| 31 | ✓ | Bot move-speed setting (slow / normal / fast / instant) |
+| 32 | ✓ | Animate moves along the actual rail/road path (non-engineer slide helper) |
+| 33 | ✓ | Camps: 8-directional adjacency (diagonals from every camp, not just center) |
+| 34 | ✓ | Central area: middle cell C(2,2) is transit-only (8 stoppable cells, not 9) |
+| 35 | ✓ | Minimize/collapse button on the RankGuide |
+| 36 | ✓ | Turn-indicator arrow pointing into the current player's zone |
+| 37 | ✓ | Replay system: encoding scheme + step-through replay mode |
+| 38 | ✓ | TODO.md follow-ups: curve bypasses corner cell + dead pieces don't interfere |
+| 39 | ✓ | Saved setup layouts — designer screen + encoding + paste at match start |
+| 40 | ✓ | Back-to-lobby button after game end |
+| 41 | ✓ | Engineer animation follows multi-leg rail BFS path (not straight A→B) |
+| 42 | ✓ | Smarter bot piece placement — avoid wasting strong pieces in the non-flag HQ |

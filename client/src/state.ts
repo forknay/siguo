@@ -45,6 +45,8 @@ interface GameStore {
   /** Pasted replay text the user wants to watch right now. When set, App
    *  renders the Replay screen with this payload. */
   pastedReplay: string | null;
+  /** When true, App renders the standalone Designer screen. */
+  designerMode: boolean;
 
   // actions
   connect: () => Promise<void>;
@@ -88,6 +90,7 @@ export const useGame = create<GameStore>((set, get) => ({
   lastError: null,
   replayText: null,
   pastedReplay: null,
+  designerMode: false,
 
   connect: async () => {
     if (get().socket) return;
@@ -118,6 +121,11 @@ export const useGame = create<GameStore>((set, get) => ({
           set({ lobby: raw, mode: raw.mode });
           break;
         case 'StateUpdate': {
+          if (raw.view === null) {
+            // Server reset the game back to lobby (e.g. ReturnToLobby).
+            set({ view: null, phase: 'lobby', pendingCombat: null });
+            break;
+          }
           const view = raw.view as PlayerView;
           const newPhase: Phase = view.phase === 'SETUP'
             ? 'setup'

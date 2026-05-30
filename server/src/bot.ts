@@ -1,8 +1,14 @@
 // Bot driver. Picks moves with a slight preference for capturing low-value targets;
 // schedules them after a configurable delay so the game feels paced.
 
-import { legalMovesForTurn, PIECE_DEFS, type BotSpeed, type SeatId } from '@siguo/shared';
+import { legalMovesForTurn, PIECE_DEFS, type BotSpeed, type GameState, type SeatId } from '@siguo/shared';
 import type { Room } from './room.js';
+
+function isSameTeam(state: GameState, a: SeatId, b: SeatId): boolean {
+  if (a === b) return true;
+  if (state.mode === 'ffa') return false;
+  return state.teams[a] === state.teams[b];
+}
 
 const SPEED_DELAYS: Record<BotSpeed, [number, number]> = {
   slow:    [1200, 1800],
@@ -47,11 +53,17 @@ function runBotMove(room: Room, seat: SeatId): void {
   const empties: Array<{ from: string; to: string }> = [];
   for (const m of moves) {
     const targetPid = state.cellIndex[m.to];
-    if (!targetPid) {
-      empties.push(m);
+    const target = targetPid ? state.pieces[targetPid] : null;
+    // Treat the cell as empty if (a) genuinely empty, (b) the piece on it
+    // belongs to an eliminated seat — dead pieces don't fight back, attacking
+    // them gains nothing, and (c) the target somehow belongs to the same team
+    // (shouldn't happen since legal moves filter teammates, but defensive).
+    const isFrozenDeadEnemy = target ? state.seats[target.owner].eliminated : false;
+    const isAlly = target ? isSameTeam(state, seat, target.owner) : false;
+    if (!target || isFrozenDeadEnemy || isAlly) {
+      empties.push({ from: m.from, to: m.to });
       continue;
     }
-    const target = state.pieces[targetPid]!;
     // Lower rank = more attractive target; mines deter unless we're an engineer.
     let w = 5;
     if (target.kind === 'JUNQI') w = 100; // flag — always go for it
@@ -61,7 +73,6 @@ function runBotMove(room: Room, seat: SeatId): void {
       const mine = myPid ? state.pieces[myPid] : null;
       const mineRank = mine ? PIECE_DEFS[mine.kind].rank ?? 0 : 0;
       const theirRank = PIECE_DEFS[target.kind].rank ?? 0;
-      // Prefer attacks where we likely outrank the target.
       w = Math.max(1, 10 + mineRank - theirRank);
     }
     attacks.push({ ...m, weight: w });

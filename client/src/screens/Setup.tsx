@@ -4,6 +4,7 @@ import {
   BOARD,
   PIECE_DEFS,
   PIECE_KINDS_ORDERED,
+  decodeSetupLayout,
   randomValidSetup,
   validateLayout,
   type PieceKind,
@@ -20,6 +21,8 @@ export function Setup() {
   const send = useGame((s) => s.send);
   const [layout, setLayout] = useState<Layout>({});
   const [pickedKind, setPickedKind] = useState<PieceKind | null>(null);
+  const [pasteValue, setPasteValue] = useState('');
+  const [pasteError, setPasteError] = useState<string | null>(null);
 
   if (!seat || !view) return <div className="screen-center">Loading setup…</div>;
   const mine = seat;
@@ -133,6 +136,40 @@ export function Setup() {
           <button onClick={clear} disabled={submitted}>Clear</button>
           <button onClick={submit} disabled={!isComplete || submitted}>Submit setup</button>
         </div>
+
+        <details>
+          <summary className="muted" style={{ fontSize: 12, cursor: 'pointer' }}>
+            Paste a saved layout
+          </summary>
+          <div className="col" style={{ gap: '0.3rem', marginTop: 4 }}>
+            <textarea
+              rows={3}
+              value={pasteValue}
+              onChange={(e) => setPasteValue(e.target.value)}
+              placeholder="SIGUOSET|v=1|……"
+              style={{ fontFamily: 'monospace', fontSize: 11 }}
+            />
+            <button
+              disabled={submitted || pasteValue.trim().length === 0}
+              onClick={() => {
+                try {
+                  const decoded = decodeSetupLayout(pasteValue.trim(), mine);
+                  setLayout(decoded);
+                  setPickedKind(null);
+                  setPasteValue('');
+                  setPasteError(null);
+                } catch (e) {
+                  setPasteError(e instanceof Error ? e.message : String(e));
+                }
+              }}
+            >
+              Load layout
+            </button>
+            {pasteError && (
+              <div style={{ color: 'var(--danger)', fontSize: 11 }}>{pasteError}</div>
+            )}
+          </div>
+        </details>
         <div className="muted" style={{ fontSize: 12 }}>
           Click a piece below, then click cells in your zone to place them. The selection stays so you can place all of one kind in a row. Click a placed piece to return it to the bank.
         </div>

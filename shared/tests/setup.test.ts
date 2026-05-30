@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { validateLayout, randomValidSetup, hqCellIds } from '../src/setup.js';
+import { validateLayout, randomValidSetup, smartValidSetup, hqCellIds } from '../src/setup.js';
 import { PIECE_DEFS, PIECES_PER_PLAYER } from '../src/pieces.js';
-import { zoneCellId, ZONES } from '../src/board.js';
+import { zoneCellId, ZONES, BOARD } from '../src/board.js';
 
 describe('randomValidSetup', () => {
   it('produces 25 placements covering all placeable cells', () => {
@@ -27,6 +27,52 @@ describe('randomValidSetup', () => {
     const a = randomValidSetup('S', 42);
     const b = randomValidSetup('S', 42);
     expect(a).toEqual(b);
+  });
+});
+
+describe('smartValidSetup', () => {
+  it('produces a fully valid layout for every zone × multiple seeds', () => {
+    for (const zone of ZONES) {
+      for (const seed of [1, 7, 31, 123, 999, 2024, 0xfeed]) {
+        const layout = smartValidSetup(zone, seed);
+        const errs = validateLayout(zone, layout);
+        if (errs.length > 0) {
+          throw new Error(`Seed ${seed} zone ${zone}: ${JSON.stringify(errs)}`);
+        }
+      }
+    }
+  });
+
+  it('never places a top-3 rank (Marshal/General/Major General) on the HQ row', () => {
+    for (const zone of ZONES) {
+      for (const seed of [1, 7, 31, 123, 999]) {
+        const layout = smartValidSetup(zone, seed);
+        for (const [cellId, kind] of Object.entries(layout)) {
+          const cell = BOARD.cells.get(cellId)!;
+          if (cell.row !== 1) continue;
+          expect(kind).not.toBe('SILING');
+          expect(kind).not.toBe('JUNZHANG');
+          expect(kind).not.toBe('SHIZHANG');
+        }
+      }
+    }
+  });
+
+  it('non-flag HQ holds a low-rank non-engineer (排长 or 连长), never a heavyweight or engineer or mine', () => {
+    for (const zone of ZONES) {
+      for (const seed of [1, 7, 31, 123, 456, 789, 2024]) {
+        const layout = smartValidSetup(zone, seed);
+        const [hqA, hqB] = hqCellIds(zone);
+        const flagHq = layout[hqA] === 'JUNQI' ? hqA : hqB;
+        const otherHq = flagHq === hqA ? hqB : hqA;
+        const kind = layout[otherHq];
+        expect(['PAIZHANG', 'LIANZHANG']).toContain(kind);
+      }
+    }
+  });
+
+  it('is deterministic given a seed', () => {
+    expect(smartValidSetup('N', 42)).toEqual(smartValidSetup('N', 42));
   });
 });
 

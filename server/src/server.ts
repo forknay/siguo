@@ -246,6 +246,24 @@ io.on('connection', (socket) => {
         if (text) emit(socket.id, { type: 'ReplayPayload', text });
         break;
       }
+      case 'ReturnToLobby': {
+        if (!bound) return;
+        const room = rooms.get(bound.roomCode);
+        if (!room) return;
+        // Allow any player to trigger the reset post-game.
+        if (room.state && room.state.phase !== 'ENDED') {
+          sendError(socket.id, 'Cannot return to lobby while a game is in progress');
+          return;
+        }
+        room.returnToLobby();
+        broadcastLobby(room);
+        // Send a null-state update so clients know to leave the play screen.
+        for (const s of ZONES_ALIAS) {
+          const sid = room.socketIdForSeat(s);
+          if (sid) emit(sid, { type: 'StateUpdate', view: null });
+        }
+        break;
+      }
       case 'Chat': {
         if (!bound) return;
         const room = rooms.get(bound.roomCode);

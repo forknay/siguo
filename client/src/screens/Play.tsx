@@ -15,6 +15,7 @@ import { CombatReveal } from '../components/CombatReveal.js';
 import { PieceInspector } from '../components/PieceInspector.js';
 import { RankGuide } from '../components/RankGuide.js';
 import { ChatPanel } from '../components/ChatPanel.js';
+import { copyToClipboard } from '../clipboard.js';
 
 const SEATS: SeatId[] = ['N', 'E', 'S', 'W'];
 
@@ -190,6 +191,12 @@ export function Play() {
             {view.result?.kind === 'PLAYER_WIN' && <div>{view.result.seat} wins!</div>}
             {view.result?.kind === 'DRAW' && <div>Draw ({view.result.reason})</div>}
             <ReplayShareButton />
+            <button
+              style={{ marginTop: '0.5rem' }}
+              onClick={() => send({ type: 'ReturnToLobby' })}
+            >
+              Back to lobby
+            </button>
           </div>
         )}
       </div>
@@ -212,13 +219,13 @@ function ReplayShareButton() {
   }
 
   function copy() {
-    navigator.clipboard?.writeText(replayText ?? '').then(
-      () => {
+    if (!replayText) return;
+    copyToClipboard(replayText).then((ok) => {
+      if (ok) {
         setCopied(true);
         setTimeout(() => setCopied(false), 1500);
-      },
-      () => { /* ignore */ },
-    );
+      }
+    });
   }
 
   return (

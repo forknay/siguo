@@ -13,7 +13,7 @@ import {
 } from '@siguo/shared';
 import { projectView, encodeGame } from '@siguo/shared';
 import type { CombatReveal, LobbyUpdate, ServerMessage } from '@siguo/shared';
-import { randomValidSetup } from '@siguo/shared';
+import { smartValidSetup } from '@siguo/shared';
 
 const ZONES: SeatId[] = ['N', 'E', 'S', 'W'];
 
@@ -158,10 +158,11 @@ export class Room {
     }
     this.state = createGameState(this.mode, seats);
     this.setupSnapshot = { N: {}, E: {}, S: {}, W: {} } as Record<SeatId, Parameters<typeof submitSetup>[2]>;
-    // Pre-submit setup for all bot seats with a random valid layout.
+    // Pre-submit setup for all bot seats with a smart layout that avoids
+    // wasting strong pieces in the immobile non-flag HQ.
     for (const s of ALL_SEATS) {
       if (this.occupants[s].kind === 'bot') {
-        const layout = randomValidSetup(s);
+        const layout = smartValidSetup(s);
         const r = submitSetup(this.state, s, layout);
         if ('errors' in r) throw new Error('bot setup errors: ' + r.errors.join(','));
         this.state = r.state;
@@ -263,5 +264,12 @@ export class Room {
   buildReplayString(): string | null {
     if (!this.state || !this.setupSnapshot) return null;
     return encodeGame(this.setupSnapshot, this.mode, this.state.moveHistory);
+  }
+
+  /** Reset the room back to the lobby (post-game). Keeps seats; clears game state. */
+  returnToLobby(): void {
+    this.state = null;
+    this.setupSnapshot = null;
+    this.pendingDrawOffers.clear();
   }
 }

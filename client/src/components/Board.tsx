@@ -201,6 +201,7 @@ export function Board(props: BoardProps) {
           return (
             <Piece
               key={p.id}
+              cellId={p.cellId}
               x={cell.x}
               y={cell.y}
               kind={p.kind}

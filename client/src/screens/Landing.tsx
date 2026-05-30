@@ -27,6 +27,7 @@ export function Landing() {
           <button onClick={() => setTab('create')} disabled={tab === 'create'}>Create game</button>
           <button onClick={() => setTab('join')} disabled={tab === 'join'}>Join game</button>
           <button onClick={() => setTab('replay')} disabled={tab === 'replay'}>Watch replay</button>
+          <button onClick={() => useGame.setState({ designerMode: true })}>Layout designer</button>
         </div>
         {tab === 'replay' ? (
           <>
