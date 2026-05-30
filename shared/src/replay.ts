@@ -25,6 +25,7 @@ import {
   createGameState,
   submitSetup,
   applyMove,
+  applyResign,
   type GameState,
   type SeatInfo,
   type MoveRecord,
@@ -175,20 +176,32 @@ export function buildReplayInitialState(encoded: EncodedGame): GameState {
 
 /** Step forward N moves from the initial state, returning the new state.
  *
- *  Robust against trailing moves once the game has ENDED (e.g. a recorded move
- *  after a flag capture would be rejected by applyMove). We stop cleanly at
- *  game end instead of throwing — the caller can still scrub all the way to
- *  the final state.
+ *  Two kinds of robustness:
+ *    1. Stops cleanly at game end (so the caller can scrub past the actual end).
+ *    2. Auto-resigns seats whose turn comes up but who don't appear next in the
+ *       recording. The bot driver resigns players with zero legal moves, but
+ *       applyResign doesn't append to moveHistory, so the recording can jump
+ *       turns. We reproduce the resignation here to keep state aligned.
  */
 export function applyMovesUpTo(initial: GameState, allMoves: EncodedGame['moves'], n: number): GameState {
   let state = initial;
   for (let i = 0; i < Math.min(n, allMoves.length); i++) {
     if (state.phase !== 'PLAYING') break;
     const m = allMoves[i]!;
+    // If the recorded move is for a different seat than whose turn it is,
+    // resign the current-turn seats (up to 4 hops) until the turn matches.
+    let safety = 4;
+    while (state.turn !== m.seat && state.phase === 'PLAYING' && safety-- > 0) {
+      state = applyResign(state, state.turn);
+    }
+    if (state.phase !== 'PLAYING') break;
+    if (state.turn !== m.seat) {
+      // eslint-disable-next-line no-console
+      console.warn(`Replay skip move ${i}: turn mismatch, expected ${state.turn} got ${m.seat}`);
+      continue;
+    }
     const r = applyMove(state, m.seat, m.from, m.to);
     if ('error' in r) {
-      // Skip this move rather than crash the replay. The state still reflects
-      // every move up to the failure point.
       // eslint-disable-next-line no-console
       console.warn(`Replay skip move ${i}: ${r.error}`);
       continue;

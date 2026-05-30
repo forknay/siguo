@@ -132,6 +132,7 @@ export function Play() {
           flagRevealed={view.flagRevealed}
           currentTurn={view.turn}
           lastMoveBySeat={view.lastMoveBySeat}
+          lastCombat={view.lastCombat}
           viewerSeat={seat}
         />
         <PieceInspector

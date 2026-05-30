@@ -1,7 +1,7 @@
 // Step-through replay viewer. Loaded when the URL contains ?replay=<encoded>.
 // The encoded payload is the text format produced by encodeGame() in shared/replay.ts.
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   buildReplayInitialState,
   applyMovesUpTo,
@@ -30,6 +30,9 @@ export function Replay({ encoded }: Props) {
 
   const [step, setStep] = useState(0);
   const [viewerSeat, setViewerSeat] = useState<SeatId>('N');
+  const [isPlaying, setIsPlaying] = useState(false);
+  // Pace matches the bot's "normal" speed midpoint (300–700ms in bot.ts).
+  const AUTOPLAY_MS = 500;
 
   if ('error' in decoded) {
     return (
@@ -54,6 +57,25 @@ export function Replay({ encoded }: Props) {
     catch (e) { return { error: e instanceof Error ? e.message : String(e) }; }
   }, [initial, decoded, step]);
 
+  // Autoplay: advance one move per AUTOPLAY_MS while isPlaying.
+  useEffect(() => {
+    if (!isPlaying) return;
+    if (step >= totalSteps) {
+      setIsPlaying(false);
+      return;
+    }
+    const id = setInterval(() => {
+      setStep((s) => {
+        if (s >= totalSteps) {
+          setIsPlaying(false);
+          return s;
+        }
+        return s + 1;
+      });
+    }, AUTOPLAY_MS);
+    return () => clearInterval(id);
+  }, [isPlaying, totalSteps, step]);
+
   if ('error' in stateResult) {
     return (
       <div className="screen-center">
@@ -77,6 +99,7 @@ export function Replay({ encoded }: Props) {
           flagRevealed={view.flagRevealed}
           currentTurn={view.turn}
           lastMoveBySeat={view.lastMoveBySeat}
+          lastCombat={view.lastCombat}
           viewerSeat={viewerSeat}
         />
       </div>
@@ -86,10 +109,25 @@ export function Replay({ encoded }: Props) {
         <div className="muted">Move {step} / {totalSteps}</div>
 
         <div className="row" style={{ flexWrap: 'wrap' }}>
-          <button onClick={() => setStep(0)} disabled={step === 0}>⏮ Start</button>
-          <button onClick={() => setStep((s) => Math.max(0, s - 1))} disabled={step === 0}>◀ Prev</button>
-          <button onClick={() => setStep((s) => Math.min(totalSteps, s + 1))} disabled={step >= totalSteps}>Next ▶</button>
-          <button onClick={() => setStep(totalSteps)} disabled={step >= totalSteps}>End ⏭</button>
+          <button onClick={() => { setStep(0); setIsPlaying(false); }} disabled={step === 0}>⏮ Start</button>
+          <button onClick={() => { setStep((s) => Math.max(0, s - 1)); setIsPlaying(false); }} disabled={step === 0}>◀ Prev</button>
+          <button
+            onClick={() => {
+              if (isPlaying) {
+                setIsPlaying(false);
+              } else if (step >= totalSteps) {
+                setStep(0);
+                setIsPlaying(true);
+              } else {
+                setIsPlaying(true);
+              }
+            }}
+            style={{ background: isPlaying ? 'var(--accent)' : undefined, color: isPlaying ? '#0e1530' : undefined, fontWeight: isPlaying ? 700 : undefined }}
+          >
+            {isPlaying ? '⏸ Pause' : '▶ Play'}
+          </button>
+          <button onClick={() => { setStep((s) => Math.min(totalSteps, s + 1)); setIsPlaying(false); }} disabled={step >= totalSteps}>Next ▶</button>
+          <button onClick={() => { setStep(totalSteps); setIsPlaying(false); }} disabled={step >= totalSteps}>End ⏭</button>
         </div>
         <input
           type="range"

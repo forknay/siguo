@@ -145,6 +145,7 @@ export function Designer() {
           setupOccupiedCells={setupOccupied}
           onCellClick={placePiece}
           viewerSeat={designSeat}
+          focusViewerZone
         />
         <PieceInspector
           kind={pickedKind}

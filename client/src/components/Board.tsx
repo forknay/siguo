@@ -5,8 +5,18 @@
 // and 2 units apart in the 3×3 central rail grid. Pieces are SVG <g> elements at
 // the cell positions; the viewer's seat is identified by color (see SEAT_COLORS).
 
+import { useEffect, useRef, useState } from 'react';
 import { BOARD, type Cell, type SeatId, type VisiblePiece } from '@siguo/shared';
 import { Piece } from './Piece.js';
+
+/** A piece that just died in combat — render it animating to the combat cell
+ *  for one beat, then remove. Lives only in Board state. */
+interface DepartingPiece {
+  tag: string;
+  piece: VisiblePiece;
+  fromCell: string;
+  toCell: string;
+}
 
 export const SEAT_COLORS: Record<SeatId, string> = {
   N: '#d96666',
@@ -31,6 +41,16 @@ interface BoardProps {
   lastMoveBySeat?: Partial<Record<SeatId, { from: string; to: string }>>;
   /** Viewer seat — used to rotate the board so the viewer's zone sits at the bottom. */
   viewerSeat?: SeatId | null;
+  /** Zoom the viewBox to just the viewer's zone (used by the Designer screen). */
+  focusViewerZone?: boolean;
+  /** Most recent combat — used to animate dying attackers to the combat cell. */
+  lastCombat?: {
+    fromCell: string;
+    toCell: string;
+    attackerSeat: SeatId;
+    defenderSeat: SeatId;
+    result: { outcome: { winner: 'attacker' | 'defender' | 'tie' } };
+  } | null;
 }
 
 /** Degrees of rotation so the given viewer's zone sits at the south of the board. */
@@ -47,6 +67,11 @@ function viewerRotation(viewer: SeatId | null | undefined): number {
 
 const PAD = 1.0;
 const VIEWBOX = `${-8 - PAD} ${-8 - PAD} ${16 + 2 * PAD} ${16 + 2 * PAD}`;
+// When focused on the viewer's own zone, the SVG window covers just the south
+// rendering region (where the viewer's zone ends up after rotation). x ∈ [-2.5,
+// 2.5], y ∈ [2.5, 8.5] with a little extra padding for the camp diagonal arcs
+// that spill outward.
+const FOCUS_VIEWBOX = '-3 2 6 7';
 
 /**
  * The four central corner cells render their two zone-connecting rails as a single
@@ -80,9 +105,49 @@ export function Board(props: BoardProps) {
   const railEdges = collectRailEdges().filter((e) => !CORNER_SUPPRESSED_RAILS.has(e.key));
   const rotation = viewerRotation(props.viewerSeat ?? null);
 
+  // Track previous piece list so we can detect a death-on-attack: when a piece
+  // disappears between renders AND lastCombat says the attacker (at fromCell)
+  // lost, we keep rendering a "ghost" of the dying piece, starting at fromCell
+  // and animating it to toCell before unmounting. This makes losing attacks
+  // visually obvious instead of the piece just vanishing.
+  const prevPieces = useRef<VisiblePiece[]>([]);
+  const [departing, setDeparting] = useState<DepartingPiece[]>([]);
+  const lastCombatRef = useRef<BoardProps['lastCombat'] | undefined>(undefined);
+
+  useEffect(() => {
+    const current = props.pieces;
+    const currentIds = new Set(current.map((p) => p.id));
+    const removed = prevPieces.current.filter((p) => !currentIds.has(p.id));
+    prevPieces.current = current;
+
+    if (!props.lastCombat || props.lastCombat === lastCombatRef.current) return;
+    lastCombatRef.current = props.lastCombat;
+    if (removed.length === 0) return;
+
+    const { fromCell, toCell, attackerSeat, result } = props.lastCombat;
+    const winner = result.outcome.winner;
+    if (winner !== 'defender' && winner !== 'tie') return; // attacker survived
+    const dying = removed.find((p) => p.cellId === fromCell && p.owner === attackerSeat);
+    if (!dying) return;
+    const tag = `dep-${Date.now()}-${dying.id}`;
+    // Render the ghost starting at fromCell; one tick later flip cellId to
+    // toCell so the Piece's built-in transform animation kicks in.
+    setDeparting((d) => [...d, { tag, piece: dying, fromCell, toCell }]);
+    const startTimer = window.setTimeout(() => {
+      setDeparting((d) => d.map((x) => x.tag === tag ? { ...x, fromCell: toCell } : x));
+    }, 16);
+    const removeTimer = window.setTimeout(() => {
+      setDeparting((d) => d.filter((x) => x.tag !== tag));
+    }, 480);
+    return () => {
+      window.clearTimeout(startTimer);
+      window.clearTimeout(removeTimer);
+    };
+  }, [props.pieces, props.lastCombat]);
+
   return (
     <svg
-      viewBox={VIEWBOX}
+      viewBox={props.focusViewerZone ? FOCUS_VIEWBOX : VIEWBOX}
       preserveAspectRatio="xMidYMid meet"
       style={{ width: '100%', height: '100%', maxHeight: '98vh', display: 'block' }}
     >
@@ -208,6 +273,24 @@ export function Board(props: BoardProps) {
               ownerColor={SEAT_COLORS[p.owner]}
               frozen={p.frozen}
               revealed={p.kind !== null}
+              textCounterRotate={-rotation}
+            />
+          );
+        })}
+        {/* Departing (just-died) attacker ghosts — animate to combat cell then vanish. */}
+        {departing.map((d) => {
+          const cell = BOARD.cells.get(d.fromCell);
+          if (!cell) return null;
+          return (
+            <Piece
+              key={d.tag}
+              cellId={d.fromCell}
+              x={cell.x}
+              y={cell.y}
+              kind={d.piece.kind}
+              ownerColor={SEAT_COLORS[d.piece.owner]}
+              frozen={false}
+              revealed={d.piece.kind !== null}
               textCounterRotate={-rotation}
             />
           );
