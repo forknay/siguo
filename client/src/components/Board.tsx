@@ -142,6 +142,7 @@ export function Board(props: BoardProps) {
     return () => {
       window.clearTimeout(startTimer);
       window.clearTimeout(removeTimer);
+      setDeparting((d) => d.filter((x) => x.tag !== tag));
     };
   }, [props.pieces, props.lastCombat]);
 

@@ -11,9 +11,8 @@ import {
   type SeatId,
   type SeatInfo,
 } from '@siguo/shared';
-import { projectView, encodeGame } from '@siguo/shared';
+import { LATEST_BOT, botRng, projectView, encodeGame } from '@siguo/shared';
 import type { CombatReveal, LobbyUpdate, ServerMessage } from '@siguo/shared';
-import { smartValidSetup } from '@siguo/shared';
 
 const ZONES: SeatId[] = ['N', 'E', 'S', 'W'];
 
@@ -158,11 +157,10 @@ export class Room {
     }
     this.state = createGameState(this.mode, seats);
     this.setupSnapshot = { N: {}, E: {}, S: {}, W: {} } as Record<SeatId, Parameters<typeof submitSetup>[2]>;
-    // Pre-submit setup for all bot seats with a smart layout that avoids
-    // wasting strong pieces in the immobile non-flag HQ.
+    // Pre-submit setup for all bot seats via the shared bot's pickSetup.
     for (const s of ALL_SEATS) {
       if (this.occupants[s].kind === 'bot') {
-        const layout = smartValidSetup(s);
+        const layout = LATEST_BOT.pickSetup({ seat: s, random: botRng(this.code.charCodeAt(0) * 7 + s.charCodeAt(0)) });
         const r = submitSetup(this.state, s, layout);
         if ('errors' in r) throw new Error('bot setup errors: ' + r.errors.join(','));
         this.state = r.state;

@@ -168,17 +168,6 @@ export function Designer() {
           </button>
         </div>
 
-        <div className="col" style={{ gap: '0.3rem' }}>
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="Name this layout (optional)"
-            style={{ fontSize: 12 }}
-            maxLength={40}
-          />
-          <button onClick={saveLocally} disabled={!isComplete}>Save to this browser</button>
-        </div>
-
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.4rem' }}>
           {remaining.map(({ kind, count }) => {
             const def = PIECE_DEFS[kind];

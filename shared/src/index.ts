@@ -34,4 +34,5 @@ export {
 export * from './view.js';
 export * from './protocol.js';
 export * from './replay.js';
+export * from './bot/index.js';
 

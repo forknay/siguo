@@ -196,14 +196,10 @@ export function applyMovesUpTo(initial: GameState, allMoves: EncodedGame['moves'
     }
     if (state.phase !== 'PLAYING') break;
     if (state.turn !== m.seat) {
-      // eslint-disable-next-line no-console
-      console.warn(`Replay skip move ${i}: turn mismatch, expected ${state.turn} got ${m.seat}`);
       continue;
     }
     const r = applyMove(state, m.seat, m.from, m.to);
     if ('error' in r) {
-      // eslint-disable-next-line no-console
-      console.warn(`Replay skip move ${i}: ${r.error}`);
       continue;
     }
     state = r.state;
