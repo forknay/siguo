@@ -8,31 +8,62 @@ current implementation by playing matches.
 
 | Layer | State |
 |---|---|
-| Move selection | **v1-fog (baseline)** — fog-respecting weighted attacks, unknown enemies use rank-4 prior |
+| Bot versions | ✓ `v0-baseline` · ✓ `v1-belief` · ✓ `v2-fog` (active, latest) |
+| Strict fog of war | ✓ `projectView` strips `attackerKind`/`defenderKind` from non-involved viewers' `moveHistory` |
+| Move selection (v2) | Strict-fog belief tracking + mine-confidence cell filtering + bomb-as-attacker heuristic |
 | Setup | `smartValidSetup` — mines clustered near flag, 排长/连长 in non-flag HQ, heavies in interior rows |
 | Versioning infra | ✓ `shared/src/bot/` with `Bot` interface, registry, `botByName` |
 | Eval harness | ✓ `pnpm bot-eval --teamA X --teamB Y --games N --mode 2v2 --seed N` |
-| Belief model | **None yet** (P1) |
-| Spatial goals | **None yet** — bot doesn't know where the enemy flag is (P2) |
-| Defense | **None yet** — never pulls pieces back toward own flag (P2) |
-| Reveal cost | **None yet** (P3) |
-| 2v2 coordination | **None yet** (P4) |
+| Belief model | ✓ `belief.ts` — outcome-based rank bounds, per-cell mineConfidence, mine-decay on cleared cells |
+| Mine confidence | ✓ Per-cell additive: position prior + failed-attack hits weighted by attacker rank |
+| Bomb offense | ✓ Bombs score `30 + estimatedRank × 5`, ×3 vs known 司令, ×2 vs known 军长 or HQ |
+| Captures panel | ✓ Rebuilt — own losses only, grouped by killer seat |
+| Spatial goals | Not yet — bot doesn't know where the enemy flag is (next: v3) |
+| Defense | Not yet — never pulls pieces back toward own flag |
+| Bomb placement bias | Deferred — punt to v2.1 if eval shows setup-time impact |
+| 2v2 coordination | Not yet (P4) |
 
-### v1-fog baseline numbers (mirror match, 5-game smoke test, seed 0)
+### Measured win rates (30 games per orientation, deterministic seeds)
 
-```
-Team A (v1-fog) wins:  2 (40.0%)
-Team B (v1-fog) wins:  3 (60.0%)
-Avg game length:       192.4 turns
-Avg pieces left A:     11.4
-Avg pieces left B:     12.6
-End reasons: flag-capture=5, stalemate=0, all-resigned=0, draw=0
-```
+| Match | Team A wins | Team B wins | Avg turns | Pieces left (A / B) |
+|---|---|---|---|---|
+| v0 vs v0 (mirror, seed 200) | 50.0% | 50.0% | 185.8 | 14.3 / 12.5 |
+| v0 vs v1 (seed 100) | 36.7% | **63.3%** | 206.7 | 11.6 / 12.5 |
+| v1 vs v0 (seed 300) | 46.7% | 53.3% | 194.6 | 12.2 / 12.5 |
+| v0 vs v2 (seed 800) | 36.7% | **63.3%** | 180.8 | 12.3 / 15.1 |
+| v2 vs v0 (seed 700) | **73.3%** | 26.7% | 196.0 | 15.3 / 11.5 |
+| v1 vs v2 (seed 500) | 30.0% | **70.0%** | 199.5 | 11.9 / 14.3 |
+| v2 vs v1 (seed 600) | **73.3%** | 26.7% | 197.6 | 14.9 / 11.0 |
 
-Variance is high at N=5; we'll lock baseline win rate at N=100 once we have
-v2 to compare against. Note B advantage is roughly within noise — seat
-geometry (which team moves first in clockwise rotation given N is "first")
-likely contributes. Larger samples will confirm.
+**Net win rates (avg of both orientations):**
+
+| Bot | vs v0 | vs v1 |
+|---|---|---|
+| v1 | ~55% | — |
+| v2 | **~68%** | **~71%** |
+
+v2 dominates both prior versions from BOTH orientations and consistently
+leaves more pieces on the board, indicating cleaner closeouts (it's
+trading less and capturing more efficiently). The strict-fog upgrade
+costs accuracy in some places but the mine-confidence + bomb offense
+heuristics more than compensate.
+
+### v1 belief-model summary
+
+For each piece in `view.pieces`:
+
+- `knownKind` is set if (a) the bot owns it, OR (b) it survived a recorded
+  combat in `moveHistory` (winner's kind is published in the combat record).
+- `estimatedRank` is the single-number score used by `scoreAttack`:
+  - Known soldier → its actual rank.
+  - Known bomb → 10 (deterring), mine → 8, flag → 0.
+  - Unknown + in HQ + unmoved → 1.5 (likely flag candidate).
+  - Unknown + back row + unmoved → 7 (likely mine/defender).
+  - Unknown + has moved → 4.16 (average soldier rank).
+- `hasMoved` is true if the cell has ever been the destination of a move.
+- Heavyweight reluctance: 司令 attacks on unknown front-line cells get
+  weight ×0.2; 军长 gets ×0.5. Keeps the marshals from suicide-probing
+  bombs in the early/midgame.
 
 **Path:** (b) fog-respecting. The bot must consume the same `PlayerView` a
 human would — its own pieces' kinds + whatever it has deduced about opponents.
@@ -359,24 +390,60 @@ subsequent phases.
 
 ## What's done so far
 
-### P0 (complete)
+### P0 (complete) — bot infrastructure
 
 - **Bot moved to `shared/src/bot/`** with versioned registry.
   - `types.ts`: `Bot`, `BotMoveContext`, `BotSetupContext`, `PickedMove`.
   - `legal.ts`: `viewMoveContext(view)`, `legalMovesForBot(view, seat)`,
     `botRng(seed)` — all driven by a `PlayerView`, never `GameState`.
-  - `v1.ts`: the fog-respecting baseline. Same weighted-attack heuristic as
-    the old omniscient bot, but with `UNKNOWN_RANK_PRIOR = 4` for any
-    enemy whose kind the view didn't reveal.
-  - `index.ts`: `BOTS` registry, `botByName(...)`, `LATEST_BOT`.
-- **Server delegates to shared bot.** `server/src/bot.ts` is now a thin
-  driver that builds a `PlayerView` for the bot's seat and calls
-  `LATEST_BOT.pickMove`. `room.ts` calls `LATEST_BOT.pickSetup` for bot
-  seat setups.
-- **Eval harness**: `pnpm bot-eval --teamA v1-fog --teamB v1-fog --games
-  100 --mode 2v2 --seed 0`. Reports per-team win rates, avg game length,
-  avg pieces remaining, and end-reason breakdown (flag-capture / stalemate
-  / all-resigned / draw).
+  - `v0.ts`: frozen baseline (rank-4 prior for unknowns).
+  - `v1.ts`: belief-based; see `belief.ts`.
+  - `index.ts`: `BOTS` registry, `botByName(...)`, `LATEST_BOT` (currently v1).
+- **Server delegates to shared bot.** `server/src/bot.ts` builds a
+  `PlayerView` for the bot's seat and calls `LATEST_BOT.pickMove`.
+  `room.ts` calls `LATEST_BOT.pickSetup` for bot seat setups.
+- **Eval harness**: `pnpm bot-eval --teamA <name> --teamB <name> --games N
+  --mode 2v2 --seed S`. Reports per-team win rates, avg game length, avg
+  pieces remaining, and end-reason breakdown.
+
+### P1 (complete) — belief model + v1 bot
+
+- **`belief.ts`** — `computeBeliefs(view, viewerSeat)` builds a `Map<pieceId,
+  PieceBelief>` by walking `view.moveHistory`. For each combat with a
+  survivor, the survivor's kind is recorded in a cell→kind map; for plain
+  moves, the destination cell is flagged as `hasMoved`. The final
+  `estimateRank()` combines known kind + position + mobility into a single
+  number.
+- **`v1.ts`** — uses `estimatedRank` in `scoreAttack`. Adds two reluctance
+  multipliers: 司令×0.2 and 军长×0.5 against unknowns on the front line.
+- **Game-log encoding now includes resigns.** `applyResign` appends a
+  `ResignEntry` to `moveHistory`; the replay encoding has `R|<seat>` lines
+  alongside `M|<seat>|<from>|<to>` lines.
+
+### P2 (complete) — v2 bot with strict fog
+
+- **F.A Strict fog of war.** `projectView` strips `combat.attackerKind` and
+  `combat.defenderKind` from `moveHistory` for any viewer who wasn't a
+  combatant. Engine emits a new `combat.defenderSeat` field so downstream
+  derivations (captures panel, belief inference) can identify the loser
+  seat without leaking ranks.
+- **F.B/F.C Mine confidence + decay.** `belief.ts` rewritten to track
+  per-cell `mineHits` (additive from observed failed attacks weighted by
+  attacker rank: ≥7→+1.0, 5–6→+0.6, else +0.3) and `cleared` flag (set on
+  any successful non-engineer move into the cell, dropping confidence to 0).
+- **`v2.ts` move scoring.**
+  - Engineer dispatch: cells with `mineConfidence > 0.4` get weight `30 +
+    20 × confidence` when an engineer can reach them.
+  - Non-engineer filter: cells with `mineConfidence > 0.4` are removed
+    from the candidate list — even 司令 won't try to walk a probable mine.
+  - Bomb offense: `myKind === 'ZHADAN'` → `30 + estimatedRank × 5`, ×3 vs
+    known 司令, ×2 vs 军长 or HQ.
+- **Captures panel rebuilt.** Shows the viewer's own losses grouped by
+  killer seat. `whoIsDefender` stub and the broken `CapturesTray` dead
+  code removed. The new `LossesPanel` reads `combat.defenderSeat` directly.
+- **Tests**: 11 new (or rewritten) in `belief.test.ts` covering strict-fog
+  inference rules, mine-confidence accumulation, and HQ flag-candidate
+  position prior. **Total 103 passing**.
 
 ### Engine support already in place (no work needed)
 
@@ -386,28 +453,99 @@ subsequent phases.
 - `view.lastCombat` — the bot can see what just happened in the most
   recent combat involving its seat (combat-aware updates).
 
-## What's next (concrete PR-sized chunks)
+## What's next — v3+ work queue (v2 complete)
 
-1. **`BotBeliefs` skeleton + tests.** (P1.a)
-   - Define `PieceBelief` per the design above.
-   - Drive belief updates from a `MoveRecord[]` sequence in unit tests
-     (synthetic histories, assert `minRank` / `maxRank` / `excludedKinds`).
-   - No move-scoring change yet; just the inference engine.
-2. **Plug beliefs into v2 bot move scoring.** (P1.b)
-   - Replace `UNKNOWN_RANK_PRIOR` with `expectedRank(target)` derived from
-     the piece's `PieceBelief`.
-   - Add `pieceValueAt(cellId)` computing EV against the bot's piece.
-   - Run `pnpm bot-eval --teamA v1-fog --teamB v2 --games 100` and expect
-     v2 ≥ 55%.
-3. **Flag-hypothesis + advance scoring.** (P2.a)
-   - Per opponent: ranked list of possible flag cells (HQs minus emptied
-     ones).
-   - Each move gets an `advanceValue` based on distance to the most likely
-     enemy flag.
-4. **Safety scoring + 司令 protection.** (P2.b)
-   - Counter of unknown enemies within K moves of own flag.
-   - Hard rule: 司令 doesn't probe unknowns at the front line.
+P0 + P1 + P2 complete (v2 wins ~70% net of seat order against v1). v2 backlog
+items below have all been implemented; the remaining queue is now v3:
 
-Acceptance for each: rerun bot-eval at N≥100 vs the prior version; check
-win-rate delta and qualitative sanity (game length, pieces remaining,
-end-reason distribution).
+### Deferred from v2 — bomb placement bias
+
+`smartValidSetup` currently puts both bombs in rows 3–4 uniformly random.
+A small column-3 preference (the central probe lane) or a side-of-seat
+preference might add a few percentage points. Punt until eval shows
+setup-time wins matter (current move-time heuristics dominate the win rate).
+
+### v3 candidates
+
+#### F.A (deferred to v2) — done above. The strict-fog projection now ships.
+
+The current `projectView` leaks `attackerKind` and `defenderKind` on every
+`moveHistory` entry. Both the bot belief model and the captures panel are
+exploiting this. Strip these for non-involved viewers — only keep the kind
+of pieces the viewer owned. After this, the bot has to *deduce* what just
+attacked it instead of reading the kind off the wire.
+
+- `projectView` filters `combat.attackerKind` (kept if `rec.seat === viewerSeat`)
+  and `combat.defenderKind` (kept if `combat.defenderSeat === viewerSeat`).
+- New field `combat.defenderSeat` populated by the engine.
+- `belief.ts` rewritten: combat updates now produce **rank bounds on the
+  opponent piece** from the outcome + our own piece's known kind.
+  - Defender survived against our known-rank attacker → defender rank ≥ N
+    (or defender is a mine, if attacker wasn't an engineer).
+  - Defender died vs our known-rank attacker → defender rank ≤ N.
+  - Tie → defender rank = N (or one side was a bomb).
+
+### F.B — Mine confidence + engineer dispatch
+
+Per-cell `mineConfidence(cellId)` score 0..1. Additively:
+- +0.3 baseline if the cell is back-row of its owner's zone and `hasMoved === false`
+- +0.5 per failed attack on this cell where the attacker's known rank was ≥ 7
+- +0.3 per failed attack where 5 ≤ attacker rank ≤ 6
+
+Move-scoring effects:
+- **Engineer** with a legal move into a cell where `mineConfidence > 0.4`:
+  weight = `30 + 20 × mineConfidence`. Engineers heavily prefer high-
+  confidence mines but the weight is **not forced** — they can still take
+  a strong capture instead (per your call).
+- **Non-engineer** legal moves into a cell with `mineConfidence > 0.4`
+  are **completely filtered out** of the candidate list (your call). Even
+  a 司令 won't try to walk into a probable mine.
+
+### F.C — Mine confidence decay
+
+Any **successful non-engineer move INTO** a cell drops its `mineConfidence`
+to 0. (A piece walked onto it and didn't die → it wasn't a mine.) An
+engineer arriving at a mine cell and surviving (defusing) also drops it,
+but that's by definition redundant.
+
+### F.D — Bomb offense
+
+`scoreAttack` rewritten for the case `myKind === 'ZHADAN'`. Base weight =
+`30 + estimatedRank × 5`. Multipliers:
+- Target known 司令 → ×3 (mutual destruction + flag-reveal cascade)
+- Target known 军长 → ×2
+- Target in HQ (could be flag) → ×2
+
+So the bot's bombs actively hunt the strongest pieces they know about,
+and prefer unknowns over mid-range known soldiers (since the unknown
+might be a 司令).
+
+### F.E — Bomb placement bias (small)
+
+Add a *small* column-preference to bomb placement in `smartValidSetup`.
+In 2v2 with N+S vs E+W, each seat's column 1 vs column 5 will be probed
+asymmetrically — the column facing the opposing partner gets attacked
+first. Bias one of the two bombs toward that column with a low weight
+(coin flip ~60/40 instead of uniform).
+
+### F.F — Captures panel rebuild
+
+Simplified panel: show **only the viewer's own losses**, grouped by killer
+seat. No opponent-kind tracking. Drop the broken `whoIsDefender` stub and
+the dead capture-tracking code in `Play.tsx`. Server uses the new
+`combat.defenderSeat` field to make this derivation trivial.
+
+### Deferred to later v2.x
+
+- **Spatial / flag-hypothesis advance scoring** (push toward enemy flag
+  candidates).
+- **Safety scoring** — pull pieces back when unknowns mass near our flag.
+- **2v2 coordination** — partner-aware target selection.
+- **Bomb baiting** — probe with mid-rank toward suspected bomb columns.
+
+### Acceptance for each
+
+Run `bot-eval` at N ≥ 60 from BOTH team orientations vs the prior version
+(e.g. v1 vs v2.A and v2.A vs v1). Require ≥55% win rate (geometric mean
+across orientations). Each version's name should reflect the change
+(`v2-fog`, `v2-mine`, `v2-bomb`, etc.) so the registry shows the lineage.

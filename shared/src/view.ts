@@ -48,6 +48,24 @@ export function projectView(
       frozen: state.seats[p.owner].eliminated,
     });
   }
+
+  // Strict fog: strip combat piece kinds from moveHistory entries the viewer
+  // wasn't a party to. The viewer always keeps the kind of THEIR OWN piece
+  // (attacker if rec.seat === viewer; defender if combat.defenderSeat === viewer).
+  const filteredHistory = options.debug
+    ? state.moveHistory
+    : state.moveHistory.map((rec) => {
+        if (rec.kind === 'resign') return rec;
+        if (!rec.combat) return rec;
+        const { combat } = rec;
+        const viewerIsAttacker = rec.seat === viewerSeat;
+        const viewerIsDefender = combat.defenderSeat === viewerSeat;
+        if (viewerIsAttacker && viewerIsDefender) return rec; // edge case (own-team)
+        const next = { ...rec, combat: { ...combat } };
+        if (!viewerIsAttacker) delete next.combat.attackerKind;
+        if (!viewerIsDefender) delete next.combat.defenderKind;
+        return next;
+      });
   return {
     mode: state.mode,
     teams: state.teams,
@@ -61,7 +79,7 @@ export function projectView(
     pieces: visible,
     lastCombat: state.lastCombat,
     lastMoveBySeat: state.lastMoveBySeat,
-    moveHistory: state.moveHistory,
+    moveHistory: filteredHistory,
     result: state.result,
     viewerSeat,
   };

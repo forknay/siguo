@@ -163,7 +163,9 @@ export function Replay({ encoded }: Props) {
               <div key={i}>
                 <span style={{ color: SEAT_COLORS[m.seat] }}>{m.seat}</span>{' '}
                 <span className="muted">#{step - i - 1}</span>{' '}
-                {m.from} → {m.to}
+                {m.kind === 'resign'
+                  ? <span style={{ color: 'var(--danger)' }}>resigned</span>
+                  : <>{m.from} → {m.to}</>}
               </div>
             ))}
           </div>

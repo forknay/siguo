@@ -89,35 +89,26 @@ export function Play() {
     }
   }
 
-  // Tally captured opponent pieces that this viewer is allowed to see.
-  const knownCaptures: Record<SeatId, Record<PieceKind, number>> = {
-    N: emptyCaptures(), E: emptyCaptures(), S: emptyCaptures(), W: emptyCaptures(),
-  };
+  // Tally MY losses, grouped by killer seat. Under strict fog the viewer
+  // always knows the kind of their own piece — so combat.attackerKind is
+  // present when rec.seat === viewerSeat, and combat.defenderKind is present
+  // when combat.defenderSeat === viewerSeat.
+  const myLosses: Partial<Record<SeatId, Partial<Record<PieceKind, number>>>> = {};
   for (const rec of view.moveHistory) {
-    if (!rec.combat) continue;
+    if (rec.kind === 'resign' || !rec.combat) continue;
     const { combat } = rec;
-    // We know about a piece if we own it (we saw it set up) or it died in our combat.
-    // Server already filters which pieces are visible — but combat reveals identities
-    // only to the two combatants in debug mode. In non-debug mode rec.combat.* are
-    // present in the moveHistory because the server includes them in the engine
-    // payload regardless (server filtering happens in projectView for cell-state, not
-    // moveHistory). To stay safe we only count captures the viewer is involved in.
-    const viewerInvolved = rec.seat === view.viewerSeat || isTeammate(view, rec.seat, view.viewerSeat);
-    const defenderSeat = whoIsDefender(view, rec);
-    const defenderIsTeammate = defenderSeat ? isTeammate(view, defenderSeat, view.viewerSeat) : false;
-    void viewerInvolved; void defenderIsTeammate;
-    // Simplest visible policy: count any combat death where the viewer's team won
-    // OR lost a piece. We just attribute the killed kind to the LOSING side.
-    if (combat.winner === 'attacker') {
-      // Defender's piece died — credit attacker seat with the captured-kind tally.
-      if (defenderSeat) knownCaptures[rec.seat][combat.defenderKind] += 1;
-    } else if (combat.winner === 'defender') {
-      // Attacker's piece died — defender keeps cell, captures attacker.
-      if (defenderSeat) knownCaptures[defenderSeat][combat.attackerKind] += 1;
-    } else {
-      // Tie — both die. Credit no one (or credit both); shown on captures of both seats.
-      if (defenderSeat) knownCaptures[defenderSeat][combat.attackerKind] += 1;
-      knownCaptures[rec.seat][combat.defenderKind] += 1;
+    const winner = combat.winner;
+    // Case 1: I was the attacker (my piece moved) and I died.
+    if (rec.seat === seat && (winner === 'defender' || winner === 'tie') && combat.attackerKind) {
+      const killer = combat.defenderSeat;
+      (myLosses[killer] ??= {});
+      myLosses[killer][combat.attackerKind] = (myLosses[killer][combat.attackerKind] ?? 0) + 1;
+    }
+    // Case 2: I was the defender and I died.
+    if (combat.defenderSeat === seat && (winner === 'attacker' || winner === 'tie') && combat.defenderKind) {
+      const killer = rec.seat;
+      (myLosses[killer] ??= {});
+      myLosses[killer][combat.defenderKind] = (myLosses[killer][combat.defenderKind] ?? 0) + 1;
     }
   }
 
@@ -179,7 +170,7 @@ export function Play() {
           </button>
         </div>
 
-        <CapturesTray captures={knownCaptures} />
+        <LossesPanel losses={myLosses} />
 
         <MoveHistory history={view.moveHistory} />
 
@@ -246,56 +237,35 @@ function ReplayShareButton() {
   );
 }
 
-function emptyCaptures(): Record<PieceKind, number> {
-  return Object.fromEntries(PIECE_KINDS_ORDERED.map((k) => [k, 0])) as Record<PieceKind, number>;
-}
-
-function isTeammate(view: ReturnType<typeof useGame.getState>['view'], a: SeatId, b: SeatId | null): boolean {
-  if (!view || !b) return false;
-  if (a === b) return true;
-  if (view.mode === 'ffa') return false;
-  return view.teams[a] === view.teams[b];
-}
-
-function whoIsDefender(
-  view: ReturnType<typeof useGame.getState>['view'],
-  rec: { seat: SeatId; to: string },
-): SeatId | null {
-  // The defender is whoever owned the piece at the destination cell BEFORE the move.
-  // After the move the cell may belong to someone else. We can recover it from the
-  // lastCombat field on the view, but the engine emits combat data per move so we
-  // need the prior-turn occupant. Approximation: look at the seats other than the
-  // attacker; in practice this is fine for the captures tally because the engine
-  // already tagged the combat result with the defender's piece kind.
-  void view;
-  void rec;
-  return null;
-}
-
-function CapturesTray({ captures }: { captures: Record<SeatId, Record<PieceKind, number>> }) {
-  const totals = SEATS.map((s) => {
-    const total = Object.values(captures[s]).reduce((a, b) => a + b, 0);
-    return { seat: s, total };
+/**
+ * Shows pieces YOU have lost, grouped by which seat killed them. Strict fog:
+ * the viewer always knows what they themselves had at game start, so own-piece
+ * kinds are always available even when the combat record's kind fields were
+ * stripped for non-viewer participants.
+ */
+function LossesPanel({ losses }: { losses: Partial<Record<SeatId, Partial<Record<PieceKind, number>>>> }) {
+  const seatsWithLosses = SEATS.filter((s) => {
+    const m = losses[s];
+    return m && Object.values(m).some((c) => (c ?? 0) > 0);
   });
-  if (totals.every((t) => t.total === 0)) {
+  if (seatsWithLosses.length === 0) {
     return (
       <div style={{ padding: '0.5rem', background: 'var(--bg)', borderRadius: 6 }}>
-        <div className="muted" style={{ fontSize: 12 }}>Captures</div>
+        <div className="muted" style={{ fontSize: 12 }}>Your losses</div>
         <div className="muted" style={{ fontSize: 12 }}>None yet</div>
       </div>
     );
   }
   return (
     <div style={{ padding: '0.5rem', background: 'var(--bg)', borderRadius: 6 }}>
-      <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>Captures by seat</div>
-      {SEATS.map((s) => {
-        const total = Object.values(captures[s]).reduce((a, b) => a + b, 0);
-        if (total === 0) return null;
+      <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>Your losses (by killer)</div>
+      {seatsWithLosses.map((s) => {
+        const m = losses[s]!;
         return (
           <div key={s} style={{ display: 'flex', flexWrap: 'wrap', gap: '0.25rem', alignItems: 'center', marginBottom: 4 }}>
             <span style={{ color: SEAT_COLORS[s], fontWeight: 600, fontSize: 12, minWidth: 18 }}>{s}</span>
             {PIECE_KINDS_ORDERED.map((k) => {
-              const count = captures[s][k];
+              const count = m[k] ?? 0;
               if (count === 0) return null;
               return (
                 <span
@@ -319,8 +289,8 @@ function CapturesTray({ captures }: { captures: Record<SeatId, Record<PieceKind,
   );
 }
 
-function MoveHistory({ history }: { history: ReturnType<typeof useGame.getState>['view'] extends infer V ? V extends { moveHistory: infer H } ? H : never : never }) {
-  const recent = (history as Array<{ seat: SeatId; from: string; to: string; turnIndex: number }>).slice(-10).reverse();
+function MoveHistory({ history }: { history: Array<{ kind?: 'move' | 'resign'; seat: SeatId; from?: string; to?: string; turnIndex: number }> }) {
+  const recent = history.slice(-10).reverse();
   return (
     <div style={{ padding: '0.5rem', background: 'var(--bg)', borderRadius: 6 }}>
       <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>Recent moves</div>
@@ -332,7 +302,9 @@ function MoveHistory({ history }: { history: ReturnType<typeof useGame.getState>
             <div key={i}>
               <span style={{ color: SEAT_COLORS[m.seat] }}>{m.seat}</span>{' '}
               <span className="muted">#{m.turnIndex}</span>{' '}
-              {m.from} → {m.to}
+              {m.kind === 'resign'
+                ? <span style={{ color: 'var(--danger)' }}>resigned</span>
+                : <>{m.from} → {m.to}</>}
             </div>
           ))}
         </div>

@@ -3,9 +3,11 @@ import {
   encodeGame, decodeGame, buildReplayInitialState, applyMovesUpTo, setupsFromState,
 } from '../src/replay.js';
 import {
-  createGameState, submitSetup, applyMove, legalMoves,
+  createGameState, submitSetup, applyMove, applyResign, legalMoves,
   type GameState, type SeatInfo,
 } from '../src/engine.js';
+import { PIECE_CHAR } from '../src/replay.js';
+import { setupCellsForZone } from '../src/board.js';
 import { randomValidSetup } from '../src/setup.js';
 import { ZONES, type ZoneId } from '../src/board.js';
 import type { SeatId } from '../src/moves.js';
@@ -68,6 +70,47 @@ function firstLegalMove(state: GameState): [string, string] {
     if (dests.length > 0) return [p.cellId, dests[0]!];
   }
   throw new Error('no legal moves');
+}
+
+describe('resign entries in the encoding', () => {
+  it('applyResign appends a resign MoveRecord to history', () => {
+    const { state } = freshFinishedSetup();
+    const next = applyResign(state, 'N');
+    const last = next.moveHistory[next.moveHistory.length - 1]!;
+    expect(last.kind).toBe('resign');
+    expect(last.seat).toBe('N');
+  });
+
+  it('encodes resigns as R|seat and decodes them back', () => {
+    const { state, setups } = freshFinishedSetup();
+    const after = applyResign(state, 'N');
+    const encoded = encodeGame(setups, '2v2', after.moveHistory);
+    expect(encoded).toContain('R|N');
+    const decoded = decodeGame(encoded);
+    expect(decoded.moves[0]?.kind).toBe('resign');
+    expect((decoded.moves[0] as { seat: string }).seat).toBe('N');
+  });
+
+  it('applyMovesUpTo applies explicit resign entries', () => {
+    const { setups } = freshFinishedSetup();
+    const encoded = `SIGUO|v=1|mode=2v2\n` +
+      `SETUP|N|${encodeSetupLine(setups, 'N')}\n` +
+      `SETUP|E|${encodeSetupLine(setups, 'E')}\n` +
+      `SETUP|S|${encodeSetupLine(setups, 'S')}\n` +
+      `SETUP|W|${encodeSetupLine(setups, 'W')}\n` +
+      `R|N`;
+    const decoded = decodeGame(encoded);
+    const initial = buildReplayInitialState(decoded);
+    const after = applyMovesUpTo(initial, decoded.moves, decoded.moves.length);
+    expect(after.seats.N.eliminated).toBe(true);
+    expect(after.turn).not.toBe('N');
+  });
+});
+
+function encodeSetupLine(setups: Record<string, ReturnType<typeof randomValidSetup>>, seat: string): string {
+  const layout = setups[seat]!;
+  const cells = setupCellsForZone(seat as 'N');
+  return cells.map((c) => PIECE_CHAR[layout[c.id]!]).join('');
 }
 
 describe('setupsFromState (pre-move snapshot)', () => {

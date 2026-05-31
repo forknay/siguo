@@ -26,6 +26,7 @@ import {
   submitSetup,
   applyMove,
   applyResign,
+  isResignEntry,
   type GameState,
   type SeatInfo,
   type MoveRecord,
@@ -94,10 +95,16 @@ function decodeLayoutForZone(seat: SeatId, chars: string): Layout {
   return layout;
 }
 
+/** History entry in the replay (matches MoveRecord but flattened for the wire). */
+export type EncodedEntry =
+  | { kind: 'move'; seat: SeatId; from: string; to: string }
+  | { kind: 'resign'; seat: SeatId };
+
 export interface EncodedGame {
   mode: GameMode;
   setups: Record<SeatId, Layout>;
-  moves: Array<{ seat: SeatId; from: string; to: string }>;
+  /** Both move and resignation entries, in order. Older field name kept for back-compat. */
+  moves: EncodedEntry[];
 }
 
 /** Serialize a complete game (from setups + moveHistory) to the replay text format. */
@@ -111,7 +118,11 @@ export function encodeGame(setups: Partial<Record<SeatId, Layout>>, mode: GameMo
     }
   }
   for (const m of moves) {
-    lines.push(`M|${m.seat}|${m.from}|${m.to}`);
+    if (isResignEntry(m)) {
+      lines.push(`R|${m.seat}`);
+    } else {
+      lines.push(`M|${m.seat}|${m.from}|${m.to}`);
+    }
   }
   return lines.join('\n');
 }
@@ -140,7 +151,10 @@ export function decodeGame(text: string): EncodedGame {
       const seat = parts[1] as SeatId;
       const from = parts[2] ?? '';
       const to = parts[3] ?? '';
-      moves.push({ seat, from, to });
+      moves.push({ kind: 'move', seat, from, to });
+    } else if (parts[0] === 'R') {
+      const seat = parts[1] as SeatId;
+      moves.push({ kind: 'resign', seat });
     } else {
       // Unknown line — ignore for forward compatibility.
     }
@@ -188,20 +202,23 @@ export function applyMovesUpTo(initial: GameState, allMoves: EncodedGame['moves'
   for (let i = 0; i < Math.min(n, allMoves.length); i++) {
     if (state.phase !== 'PLAYING') break;
     const m = allMoves[i]!;
-    // If the recorded move is for a different seat than whose turn it is,
-    // resign the current-turn seats (up to 4 hops) until the turn matches.
+
+    // Explicit resignation entry.
+    if (m.kind === 'resign') {
+      state = applyResign(state, m.seat);
+      continue;
+    }
+
+    // Backward-compat: older encodings lacked R| entries; if the turn doesn't
+    // match the next move's seat, auto-resign current-turn seats until it does.
     let safety = 4;
     while (state.turn !== m.seat && state.phase === 'PLAYING' && safety-- > 0) {
       state = applyResign(state, state.turn);
     }
     if (state.phase !== 'PLAYING') break;
-    if (state.turn !== m.seat) {
-      continue;
-    }
+    if (state.turn !== m.seat) continue;
     const r = applyMove(state, m.seat, m.from, m.to);
-    if ('error' in r) {
-      continue;
-    }
+    if ('error' in r) continue;
     state = r.state;
   }
   return state;

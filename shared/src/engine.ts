@@ -79,7 +79,15 @@ export interface GameState {
   result: GameResult | null;
 }
 
-export interface MoveRecord {
+/**
+ * History entries. Discriminated by `kind`. Old serialized data without `kind`
+ * is treated as a normal move for backward compatibility — see `isMoveEntry`
+ * and `isResignEntry` helpers.
+ */
+export type MoveRecord = MoveEntry | ResignEntry;
+
+export interface MoveEntry {
+  kind?: 'move';
   seat: SeatId;
   from: string;
   to: string;
@@ -87,9 +95,28 @@ export interface MoveRecord {
   /** Set when this move resolved combat. */
   combat?: {
     winner: 'attacker' | 'defender' | 'tie';
-    attackerKind: PieceKind;
-    defenderKind: PieceKind;
+    /** Defender's seat — present so the captures panel + bot belief inference
+     *  can identify which seat owned the piece sitting at `to` before this move. */
+    defenderSeat: SeatId;
+    /** Piece kinds. Under strict fog (default), projectView strips these from
+     *  viewers other than the owner of each piece — the bot has to infer. */
+    attackerKind?: PieceKind;
+    defenderKind?: PieceKind;
   };
+}
+
+export interface ResignEntry {
+  kind: 'resign';
+  seat: SeatId;
+  turnIndex: number;
+}
+
+export function isResignEntry(r: MoveRecord): r is ResignEntry {
+  return (r as ResignEntry).kind === 'resign';
+}
+
+export function isMoveEntry(r: MoveRecord): r is MoveEntry {
+  return !isResignEntry(r);
 }
 
 /** 2v2 team mapping: N+S vs E+W. */
@@ -354,7 +381,8 @@ export function applyMove(
     result = endResult;
   }
 
-  const moveRecord: MoveRecord = {
+  const moveRecord: MoveEntry = {
+    kind: 'move',
     seat,
     from,
     to,
@@ -363,6 +391,7 @@ export function applyMove(
       ? {
           combat: {
             winner: combatLog.result.outcome.winner,
+            defenderSeat: combatLog.defenderSeat,
             attackerKind: combatLog.result.attackerKind,
             defenderKind: combatLog.result.defenderKind,
           },
@@ -411,6 +440,7 @@ export function applyResign(state: GameState, seat: SeatId): GameState {
   const newFlagRevealed = { ...state.flagRevealed, [seat]: true };
 
   const result = computeEnd(state.mode, newSeats, state.movesSinceCapture);
+  const resignEntry: ResignEntry = { kind: 'resign', seat, turnIndex: state.turnIndex };
   return {
     ...state,
     seats: newSeats,
@@ -418,6 +448,7 @@ export function applyResign(state: GameState, seat: SeatId): GameState {
     flagRevealed: newFlagRevealed,
     turn: nextTurn,
     phase: result ? 'ENDED' : state.phase,
+    moveHistory: [...state.moveHistory, resignEntry],
     result,
   };
 }

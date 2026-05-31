@@ -3,14 +3,17 @@
 // file (e.g. v2.ts), import it, append to BOTS.
 
 import type { Bot } from './types.js';
+import { v0 } from './v0.js';
 import { v1 } from './v1.js';
+import { v2 } from './v2.js';
 
 export type { Bot, BotMoveContext, BotSetupContext, PickedMove } from './types.js';
 export { legalMovesForBot, viewMoveContext, botRng } from './legal.js';
-export { v1 };
+export { computeBeliefs, estimateRank, type PieceBelief } from './belief.js';
+export { v0, v1, v2 };
 
 /** All bots available. Ordered oldest → newest. */
-export const BOTS: readonly Bot[] = [v1];
+export const BOTS: readonly Bot[] = [v0, v1, v2];
 
 /** Look up a bot by its `name` field. Throws on miss. */
 export function botByName(name: string): Bot {
