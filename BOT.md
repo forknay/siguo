@@ -1,5 +1,31 @@
 # Bot strategy + implementation plan
 
+## Design decisions log
+
+Explicit choices the user has made through this work that constrain future
+versions. Listed so we don't accidentally re-litigate them.
+
+- **Path (b) — fog-respecting "player" bot, not an omniscient assistant.**
+  Every bot version after v0 must consume `PlayerView`, never `GameState`.
+- **No ML.** Heuristics + sampling only. Stratego ISMCTS / neural rollouts are deliberately out of scope unless flat MC + UCB tree plateau.
+- **Engineer valued at 100 (= 旅长, rank 6)** in `PIECE_VALUE`. Reflects mine-clearing utility scarcity.
+- **Strict fog of war everywhere.** `projectView` strips `attackerKind`/`defenderKind` from `moveHistory` for non-involved viewers (P2 / v2). Bots get the same fog humans do.
+- **2v2 focus.** Coordination + setup heuristics tune for 2v2; FFA is supported by the engine but not the primary design target for bots.
+- **Bombs hunt strong pieces.** v2's `scoreAttack` for `myKind === ZHADAN` scores `30 + estimatedRank × 5` with multipliers vs known 司令 (×3), 军长 (×2), HQ (×2).
+- **Engineers favor probable mines but are not forced** there. Weighted always, never required.
+- **Cells with `mineConfidence > 0.4` are hard-blocked for non-engineers.** Filtered out of the legal-move list entirely.
+- **HQ position prior dropped from the sampler.** HQ pieces can't move, so the hard constraint already nails the JUNQI placement; a prior would be redundant.
+- **No bomb-bonus for back-row+unmoved in the sampler.** Bombs in rows 1–2 are unusual in human play.
+- **Partner stays strict-fog in 2v2.** No allied-visible variant. Bot treats partner identically to opponents at the sampler level.
+- **Sampler defers backtracking.** Greedy + tight-constraint-first + retry-seed on infeasible. Add backtracking only if real games show pathological failure rates.
+- **Top-K static-score lookahead is dead.** Option A from the original v3 plan won't ship — it filters away exactly the setup/clearance moves planning is supposed to discover. v3.5 starts from sampled Monte Carlo with all legal root moves.
+- **Resignations are explicit in the encoding.** `applyResign` appends a `ResignEntry` to `moveHistory`; replay encoding has `R|<seat>` lines.
+- **Dead pieces are transparent to movement.** Engine, bot, and client all filter `p.frozen` in their `MoveContext` builders. One canonical builder (`viewMoveContext` in `shared/src/bot/legal.ts`) shared between the bot and the client.
+- **Strong-piece activation bias is tiny (`STRONG_MOVE_BIAS = 1.5` × rank).** Applied as a tie-break on v3-mc's root-move mean utility + in the rollout fast-policy empty-move weight. Far smaller than material-driven deltas, so it only breaks near-ties toward moving 司令/军长 rather than leaving them parked. Frozen baselines (v0–v2.1) are NOT modified — the bias lives only in v3-mc and its rollout.
+- **Bot selection is speed-gated.** The server runs the expensive `v3-mc` planner at `normal`/`slow` botSpeed, and falls back to the cheap `v2.1` heuristic at `fast`/`instant` (where v3-mc's ~100–300 ms/move would stall the loop).
+
+
+
 A fog-respecting heuristic player bot for Si Guo Jun Qi 2v2. No ML. Designed
 to be improved incrementally so we can measure each change against the
 current implementation by playing matches.
@@ -8,7 +34,7 @@ current implementation by playing matches.
 
 | Layer | State |
 |---|---|
-| Bot versions | ✓ `v0-baseline` · ✓ `v1-belief` · ✓ `v2-fog` (active, latest) |
+| Bot versions | ✓ `v0-baseline` · ✓ `v1-belief` · ✓ `v2-fog` · ✓ `v2.1-fixes` · ✓ `v3-mc` (active, latest) |
 | Strict fog of war | ✓ `projectView` strips `attackerKind`/`defenderKind` from non-involved viewers' `moveHistory` |
 | Move selection (v2) | Strict-fog belief tracking + mine-confidence cell filtering + bomb-as-attacker heuristic |
 | Setup | `smartValidSetup` — mines clustered near flag, 排长/连长 in non-flag HQ, heavies in interior rows |
@@ -18,7 +44,9 @@ current implementation by playing matches.
 | Mine confidence | ✓ Per-cell additive: position prior + failed-attack hits weighted by attacker rank |
 | Bomb offense | ✓ Bombs score `30 + estimatedRank × 5`, ×3 vs known 司令, ×2 vs known 军长 or HQ |
 | Captures panel | ✓ Rebuilt — own losses only, grouped by killer seat |
-| Spatial goals | Not yet — bot doesn't know where the enemy flag is (next: v3) |
+| Planning | ✓ `v3-mc` — belief-sampled Monte Carlo, all legal root moves × 6-ply rollouts |
+| Strong-piece bias | ✓ Small rank-weighted tie-break so heavyweights don't get parked (`strongMoveBonus`) |
+| Spatial goals | Not yet — bot doesn't know where the enemy flag is (next: v3.x) |
 | Defense | Not yet — never pulls pieces back toward own flag |
 | Bomb placement bias | Deferred — punt to v2.1 if eval shows setup-time impact |
 | 2v2 coordination | Not yet (P4) |
@@ -420,6 +448,70 @@ subsequent phases.
   `ResignEntry` to `moveHistory`; the replay encoding has `R|<seat>` lines
   alongside `M|<seat>|<from>|<to>` lines.
 
+### P3 (complete) — v3-mc bot with belief-sampled Monte Carlo
+
+The first non-greedy bot. For each turn:
+
+- Compute `PieceBelief` map from the (fog-filtered) view.
+- For `S = 20` samples:
+  - Build a concrete `GameState` via `sampleConcreteWorld(view, beliefs, seat, rng)` — see [Sampler — detailed algorithm](#sampler--detailed-algorithm).
+  - For every legal root move (NOT top-K — see why-top-K-fails), apply it on the sampled world, then play out `D = 6` plies with `playOutFromSampled` (v2.1-style EV policy in the perfect-info sampled world).
+  - Score the terminal state with `evaluateRollout` (material delta + Marshal-alive bonus + win/loss sentinels).
+- Pick the move with the highest mean utility across samples.
+
+If all `S` sampling attempts fail (very rare — would require contradictory beliefs), fall back to v2.1.
+
+**Measured results (10 games per orientation):**
+
+| Match | A wins | B wins | Draws | Avg turns | Pieces left A/B |
+|---|---|---|---|---|---|
+| v3-mc vs v2.1 (seed 5100) | **80.0%** | 10.0% | 10.0% | 208.1 | 20.2 / 13.9 |
+| v2.1 vs v3-mc (seed 5200) | 0.0% | **90.0%** | 10.0% | 220.1 | 13.6 / 17.8 |
+
+v3-mc wins ~85% vs v2.1 across both orientations. Avg pieces remaining ~18–20 for v3-mc vs ~13–14 for v2.1 — clean closeouts; the planner trades less and captures more efficiently. Game length ~210 turns (longer than v2.1 vs v2.1 ~185) — the planner avoids quick captures that have negative future value, taking more careful lines instead.
+
+**Cost**: each turn samples 20 worlds × ~30–80 root moves × 6-ply rollouts ≈ 4–10 k ply-sims. On commodity hardware ~100–300 ms per move at the chosen budget. Acceptable for `normal` / `slow` botSpeed; for `fast` / `instant` the server should fall back to v2.1 explicitly (not yet wired — see open items).
+
+**Tests** (`sampler.test.ts`, 8 new): determinism, every opponent piece gets a concrete kind, roster bounds respected (count ≤ ROSTER, sum = 25), setup-rule constraints (flag→HQ, mines→rows 1–2, bombs not row 6), viewer's own kinds preserved, rank lower bound honored across 25 samples, fresh game doesn't throw, `SampleInfeasibleError` is a typed Error.
+
+### P2.1 (complete) — v2.1 bug fixes
+
+User-observed bugs in v2 play:
+
+1. **"Move 1 back" shuffle.** v2's 30% random empty-move share would
+   sometimes pick a move that exactly reverses last turn's move by the
+   same piece, creating a loop where the bot wastes turns shuffling.
+2. **No safety after a strong piece dies.** A 师长 (rank 7) lost to a 司令
+   (rank 9); v2 still attacked the survivor with multiple weaker pieces.
+   The belief correctly set `minRank=7` but v2's linear `10 + myRank −
+   theirRank` formula didn't deter weaker attackers enough.
+
+`v2.1.ts` ships:
+
+- **Anti-shuffle filter** — drop any candidate move where `(from, to)` is
+  the exact reverse of `view.lastMoveBySeat[seat]`.
+- **EV-based combat scoring** — `scoreAttackEV` uses a piece-value table
+  (`values.ts`) plus the belief's `minRank` / `maxRank` to compute
+  `P(win)·value(target) − P(lose)·value(myself) − P(tie)·blendedValue`.
+  Weaker-vs-stronger attacks now score deeply negative.
+- **Engineer valued at 100** (= 旅长, rank 6) reflecting its mine-clearing
+  utility and the low engineer count in the roster.
+- **Empty-move directional bias** — empty moves get a weight based on
+  whether they move closer to the opponent centroid. Pure-random no-op
+  movement penalty.
+- **Attack share bump 70%→90%** when any attack weight ≥ 30. Stops the
+  bot from declining strong attacks for random idle moves.
+
+Results (30 games per orientation, deterministic seeds):
+
+| Match | A wins | B wins | Avg pieces left A/B |
+|---|---|---|---|
+| v2.1 vs v2 (seed 1000) | **66.7%** | 33.3% | 15.0 / 12.7 |
+| v2 vs v2.1 (seed 1100) | 30.0% | **70.0%** | 11.7 / 12.7 |
+
+v2.1 wins ~68% across both orientations. Games end faster (179.8 turns
+vs ~196) — the bot stops wasting tempos on shuffles.
+
 ### P2 (complete) — v2 bot with strict fog
 
 - **F.A Strict fog of war.** `projectView` strips `combat.attackerKind` and
@@ -465,87 +557,242 @@ A small column-3 preference (the central probe lane) or a side-of-seat
 preference might add a few percentage points. Punt until eval shows
 setup-time wins matter (current move-time heuristics dominate the win rate).
 
-### v3 candidates
+### v3 plan
 
-#### F.A (deferred to v2) — done above. The strict-fog projection now ships.
+1. **Flag-hypothesis advance scoring** — per opponent, ranked list of cells
+   that could hold their flag. Each move gets `advanceValue` based on
+   distance to the most likely candidate. The HQ cell stays a candidate
+   until a piece is observed moving OUT of it (flags never move).
+2. **Safety scoring + 司令 protection** — counter of unknown enemies within
+   K moves of own flag; pull pieces back if K drops below threshold.
+3. **2v2 coordination** — partner-aware target selection. If partner is
+   pressuring E, this bot pressures W.
+4. **Bomb baiting** — explicitly probe high-density unknown clusters near
+   the flag with mid-rank pieces.
+5. **Multi-ply lookahead / planning** — see below.
 
-The current `projectView` leaks `attackerKind` and `defenderKind` on every
-`moveHistory` entry. Both the bot belief model and the captures panel are
-exploiting this. Strip these for non-involved viewers — only keep the kind
-of pieces the viewer owned. After this, the bot has to *deduce* what just
-attacked it instead of reading the kind off the wire.
+### v3.5 — Multi-ply lookahead under imperfect information
 
-- `projectView` filters `combat.attackerKind` (kept if `rec.seat === viewerSeat`)
-  and `combat.defenderKind` (kept if `combat.defenderSeat === viewerSeat`).
-- New field `combat.defenderSeat` populated by the engine.
-- `belief.ts` rewritten: combat updates now produce **rank bounds on the
-  opponent piece** from the outcome + our own piece's known kind.
-  - Defender survived against our known-rank attacker → defender rank ≥ N
-    (or defender is a mine, if attacker wasn't an engineer).
-  - Defender died vs our known-rank attacker → defender rank ≤ N.
-  - Tie → defender rank = N (or one side was a bomb).
+All bot versions so far are *one-ply greedy* — they pick the best-scoring
+move for THIS turn and ignore future consequences. That misses obvious
+coordination plays:
 
-### F.B — Mine confidence + engineer dispatch
+- **Clearance moves**: moving a piece out of the way so my engineer (two
+  cells back) has a clear path to a known mine next turn.
+- **Setup attacks**: moving a piece toward a cell whose current occupant
+  is bottled in, then attacking next turn when they have nowhere to flee.
+- **Cover / defense moves**: pulling a strong piece back to threaten a
+  cell my opponent's 司令 would have to step through.
+- **Tempo trades**: accepting a small material loss now to expose a higher-
+  value target next turn.
 
-Per-cell `mineConfidence(cellId)` score 0..1. Additively:
-- +0.3 baseline if the cell is back-row of its owner's zone and `hasMoved === false`
-- +0.5 per failed attack on this cell where the attacker's known rank was ≥ 7
-- +0.3 per failed attack where 5 ≤ attacker rank ≤ 6
+#### Why top-K filtering breaks all of these
 
-Move-scoring effects:
-- **Engineer** with a legal move into a cell where `mineConfidence > 0.4`:
-  weight = `30 + 20 × mineConfidence`. Engineers heavily prefer high-
-  confidence mines but the weight is **not forced** — they can still take
-  a strong capture instead (per your call).
-- **Non-engineer** legal moves into a cell with `mineConfidence > 0.4`
-  are **completely filtered out** of the candidate list (your call). Even
-  a 司令 won't try to walk into a probable mine.
+The obvious approach is "for each of the top-K candidates by static score,
+search a few plies, pick the best." It fails on exactly the moves we
+care about. A clearance move (e.g. "step my 排长 sideways to vacate
+column 3 for my engineer") has NEAR-ZERO static value — it doesn't
+capture, it doesn't threaten, it's effectively a no-op according to
+v2's `scoreAttack`. It will not appear in any top-K list. The very class
+of moves we want planning to discover is the class top-K filtering
+eliminates first.
 
-### F.C — Mine confidence decay
+So v3.5 starts from belief-sampled Monte Carlo with **every legal move**
+at the root, not top-K.
 
-Any **successful non-engineer move INTO** a cell drops its `mineConfidence`
-to 0. (A piece walked onto it and didn't die → it wasn't a mine.) An
-engineer arriving at a mine cell and surviving (defusing) also drops it,
-but that's by definition redundant.
+#### Approach — sampled Monte Carlo over all legal root moves
 
-### F.D — Bomb offense
+Pseudocode at the root:
 
-`scoreAttack` rewritten for the case `myKind === 'ZHADAN'`. Base weight =
-`30 + estimatedRank × 5`. Multipliers:
-- Target known 司令 → ×3 (mutual destruction + flag-reveal cascade)
-- Target known 军长 → ×2
-- Target in HQ (could be flag) → ×2
+```
+beliefs = computeBeliefs(view, mySeat)
+rootMoves = legalMovesForBot(view, mySeat)    // ALL of them (~30–80)
+scoreSums   = Map<move, number>()
+visitCounts = Map<move, number>()
 
-So the bot's bombs actively hunt the strongest pieces they know about,
-and prefer unknowns over mid-range known soldiers (since the unknown
-might be a 司令).
+for s in 1..S_SAMPLES:                        // S ≈ 20–40
+  sampled = sampleConcreteWorld(beliefs)      // concrete kinds for unknowns
+  for move in rootMoves:
+    state'   = applyMove(sampled, mySeat, move.from, move.to)
+    rollout  = playOutWithFastPolicy(state', maxDepth = D)
+    scoreSums[move]   += evaluate(rollout)
+    visitCounts[move] += 1
 
-### F.E — Bomb placement bias (small)
+return argmax(move => scoreSums[move] / visitCounts[move])
+```
 
-Add a *small* column-preference to bomb placement in `smartValidSetup`.
-In 2v2 with N+S vs E+W, each seat's column 1 vs column 5 will be probed
-asymmetrically — the column facing the opposing partner gets attacked
-first. Bias one of the two bombs toward that column with a low weight
-(coin flip ~60/40 instead of uniform).
+Components:
 
-### F.F — Captures panel rebuild
+- **`sampleConcreteWorld(beliefs)`** — for each opponent piece without
+  `knownKind`, draw a kind from the prior conditioned on `excludedKinds`,
+  `minRank`/`maxRank`, position priors, and remaining roster counts
+  after subtracting known + dead pieces. This is the imperfect-info
+  bit: every search runs in a different plausible world.
+- **`playOutWithFastPolicy(state, D)`** — play D plies forward using v2's
+  `scoreAttack` as the policy for every seat. Fast because v2 picks a
+  move in microseconds. D ≈ 4–8.
+- **`evaluate(rollout)`** — terminal-aware utility:
+  - Game ended in our team's win: +large
+  - Game ended in our team's loss: −large
+  - Otherwise: material delta + flag-cell occupancy bonus + 司令-alive
+    bonus + maybe a small `mineConfidence`-cleared bonus (we made progress
+    even if we didn't capture).
 
-Simplified panel: show **only the viewer's own losses**, grouped by killer
-seat. No opponent-kind tracking. Drop the broken `whoIsDefender` stub and
-the dead capture-tracking code in `Play.tsx`. Server uses the new
-`combat.defenderSeat` field to make this derivation trivial.
+**Why this works for setup moves**: the clearance move scores 0
+statically but in the rollout, the *next* turn's engineer-into-mine play
+scores high (via v2's `mineConfidence` reward path). The rollout result
+attributes that future value back to the clearance move at the root.
+Setup-and-payoff emerges from the simulation, not from the per-move
+heuristic.
 
-### Deferred to later v2.x
+**Why this works for hidden info**: averaging across S sampled worlds
+gives the bot a robust answer instead of betting on one specific opponent
+configuration. If a back-row piece is a mine in 50% of samples and a 司令
+in 50%, the move's evaluation honestly reflects that split.
 
-- **Spatial / flag-hypothesis advance scoring** (push toward enemy flag
-  candidates).
-- **Safety scoring** — pull pieces back when unknowns mass near our flag.
-- **2v2 coordination** — partner-aware target selection.
-- **Bomb baiting** — probe with mid-rank toward suspected bomb columns.
+#### Sampler — detailed algorithm
 
-### Acceptance for each
+This is what `sampleConcreteWorld` actually does, per the design discussion.
+The job: given the bot's fog-of-war view + the belief map, produce one
+plausible perfect-info `GameState` by assigning a concrete `PieceKind` to
+every opponent (and partner) piece whose kind the bot doesn't know.
 
-Run `bot-eval` at N ≥ 60 from BOTH team orientations vs the prior version
-(e.g. v1 vs v2.A and v2.A vs v1). Require ≥55% win rate (geometric mean
-across orientations). Each version's name should reflect the change
-(`v2-fog`, `v2-mine`, `v2-bomb`, etc.) so the registry shows the lineage.
+**Hard constraints** the sampler must respect:
+
+| Constraint | Source |
+|---|---|
+| Per-seat 25-piece roster totals | game rules |
+| `belief.knownKind` (flag-reveal, etc.) | bot's view |
+| `belief.minRank` / `belief.maxRank` | combat inference |
+| `belief.excludedKinds` (hasMoved → not mine/flag) | observation |
+| Flag must be in an HQ cell | setup rule |
+| Mines only in back two rows of owner's zone | setup rule |
+| Bombs not in front line (row 6) | setup rule |
+
+**Soft constraints** (position-prior weight multipliers):
+
+| Condition | Kind | Multiplier |
+|---|---|---|
+| `inBackRow && !hasMoved` | DILEI | ×3 |
+| `inBackRow && !hasMoved` | JUNQI | ×2 |
+| `hasMoved` | DILEI / JUNQI | (already in `excludedKinds`; no extra effect) |
+
+Decisions baked in from the design discussion:
+- **No `inHQ` position prior.** HQ pieces can't move, so the hard
+  constraint (`JUNQI` only legal in HQ, plus the bot's knowledge of
+  whether the HQ has had a piece move out) already nails it. Prior would
+  be redundant.
+- **No bomb-bonus for back-row+unmoved.** Bombs in rows 1–2 are unusual
+  in human play; the prior would mislead.
+- **Partner stays strict-fog.** In 2v2 the bot treats its partner's
+  pieces identically to opponents' (unknown). No allied-visible variant.
+- **No backtracking yet.** Greedy + tight-constraint-first + retry-seed
+  on `SampleInfeasibleError`. Add backtracking if real games show
+  pathological failure rates.
+
+**Algorithm** (per non-viewer seat):
+
+1. **Categorize pieces:**
+   - **Known-alive**: `belief.knownKind !== null`. Lock the kind; subtract from pool.
+   - **Unknown-alive**: collect for assignment.
+   - **Known-dead** (from combats the bot was a party to): subtract kind from pool.
+   - **Unknown-dead**: count `totalDeaths − knownDeaths`. These consume pool slots later but aren't returned.
+
+2. **Build the per-seat pool:**
+   ```
+   pool[seat][kind] = ROSTER[kind] − (count of seat's known pieces of that kind, alive + dead)
+   ```
+   Where `ROSTER = { SILING: 1, JUNZHANG: 1, SHIZHANG: 2, LUZHANG: 2, TUANZHANG: 2, YINGZHANG: 2, LIANZHANG: 3, PAIZHANG: 3, GONGBING: 3, ZHADAN: 2, DILEI: 3, JUNQI: 1 }`. Total per seat = 25.
+
+   Sanity check: `Σ pool[seat] = unknownAliveCount + unknownDeadCount`.
+
+3. **Sort unknown-alive by valid-kind-set size (ascending).** Tightest constraints first prevents greedy failures where loose pieces "steal" the only valid kind from a constrained piece.
+
+   `validKinds(belief, pool, cell)` = `{ kind ∈ pool with pool[kind] > 0 AND kind ∉ excludedKinds AND (minRank == null OR rank ≥ minRank OR rankless) AND (maxRank == null OR rank ≤ maxRank OR rankless) AND if kind === JUNQI: cell.type === 'HQ' AND if kind === DILEI: cell.row ≤ 2 AND if kind === ZHADAN: cell.row !== 6 }`.
+
+4. **Greedy weighted assignment:**
+   ```
+   for piece in sorted unknownAlive:
+     valid = validKinds(belief, pool, cell)
+     if valid.empty: throw SampleInfeasibleError
+     weights[kind] = pool[kind] × positionPrior(belief, kind)
+     kind = weightedDraw(weights, rng)
+     pool[kind] -= 1
+     assignment[piece.id] = kind
+   ```
+
+5. **Consume remaining pool with unknown-dead.** Uniformly decrement until exhausted. These pieces aren't in the returned state.
+
+6. **Build the GameState.** Mirror the view's structure (mode, teams, seats, turn, turnIndex, movesSinceCapture, flagRevealed, marshalDead, lastCombat, lastMoveBySeat, moveHistory) but with concrete kinds in `pieces` and an `knownToPlayers` that gives the bot full visibility within this sampled world. `phase: 'PLAYING'`. `result: null`.
+
+**Failure handling.** `SampleInfeasibleError` thrown on tight pool. Caller retries with new seeds up to ~5 times, then falls back to v2.1's `pickMove`. Logged as a warning. Should be rare in practice — beliefs come from observed events so the real state always satisfies them; only ordering bad luck can trip greedy. Backtracking is the v3.1 cure if needed.
+
+**Test plan** (`sampler.test.ts`):
+
+1. Determinism: same view + seed → same `GameState`.
+2. Roster respect: per opponent seat, assigned-kind counts ≤ roster counts; sum = 25.
+3. Constraint respect: no piece with `minRank=5` assigned rank-2 排长; no `excludedKinds.has('DILEI')` piece assigned mine; no mine outside back two rows; no flag outside HQ.
+4. Position-prior empirical: 1000 samples from a fixed view with one unknown back-row unmoved piece → DILEI assignment rate well above its uniform-pool share.
+5. Failure path: deliberately impossible constraints → `SampleInfeasibleError`.
+6. Full-roster consistency: count kinds across alive + dead assignments per seat; equals canonical roster minus known kinds.
+
+#### Rollout policy notes
+
+Each ply of `playOutWithFastPolicy` projects the current sampled-world state for the seat about to move, computes their beliefs, and runs v2.1's `pickMove`. In the sampled world all kinds are concrete, so each seat sees their own pieces correctly. Opponents in the rollout still respect strict fog — they don't know our (sampled) kinds either, but they see their own and can infer from past combats.
+
+First-pass simplification (subject to eval results): opponents in the rollout act with v2.1's heuristic against the sampled world directly, without re-running `projectView` per ply. This biases toward stronger rollout opponents but is much cheaper. If eval shows the bias hurts (probably overestimates difficulty for us), we'll switch to per-ply projection.
+
+#### Cost / budget
+
+Each (sample × move × rollout) is one short sim. With ~50 moves × 30
+samples × 6-ply rollouts ≈ 9000 ply-evaluations per turn. At v2's
+microsecond-per-pick speed that's ~100–500 ms of compute. Acceptable for
+`slow`/`normal` botSpeed. For `fast`/`instant`, the bot driver should
+fall back to v2 directly (no lookahead). `bot-eval` gains a `--depth`
+flag; live play reads the room's botSpeed.
+
+#### Safe pruning (only where strictly dominated)
+
+We can shave compute without breaking setup-move discovery: drop only
+moves that are *strictly dominated*. Examples:
+
+- A 司令 attacking a known DILEI (always loses).
+- Any non-engineer move onto a cell with `mineConfidence > 0.4` (already
+  filtered by v2's policy).
+- Any move into a teammate's cell (already filtered by legality).
+
+Never prune by static score — that's what loses the clearance moves.
+
+#### Future upgrades
+
+- **UCB-style tree expansion** (true MCTS): if flat MC is too noisy,
+  upgrade to a tree where children are visited proportional to
+  `mean + c × sqrt(log(N)/n)`. The tree explores promising sub-lines
+  more often while still touching every move at least once. Natural
+  next step if Option B plateaus.
+- **Belief updates inside the rollout**: each simulated ply updates the
+  inside-rollout belief based on the simulated combat outcome, so the
+  bot models "what would I infer about the opponent after I play this?"
+  Only if eval shows the static rollout is too brittle.
+- **ISMCTS** (full information-set MCTS): bibliography-grade approach.
+  Out of scope unless the above plateau.
+
+#### Watch-outs
+
+- **Determinism**: search must use the seeded `botRng`, not `Math.random`,
+  or the eval harness becomes useless. Each (sample, move) pair gets its
+  own sub-RNG so reruns are reproducible.
+- **Belief immutability**: keep the real `PieceBelief` map immutable
+  during search. Sampled worlds are throwaway state.
+- **Skip the heuristic-top-K lookahead path** that was the original
+  Option A. It can't see setup moves.
+
+#### Phasing
+
+1. Belief sampler + `playOutWithFastPolicy` skeleton + `evaluate`. Unit-
+   test that `sampleConcreteWorld` produces only kind assignments
+   respecting roster counts, `excludedKinds`, and rank bounds.
+2. Wire into a new `v3-mc` bot. Acceptance: ≥ 55% vs v2 across both
+   orientations at S=30, D=6.
+3. If acceptance fails, try widening rollout depth and/or sample count.
+   Then escalate to UCB tree (`v3.1-mcts`) if still below threshold.
