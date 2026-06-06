@@ -1,107 +1,67 @@
 # TODO
 
+## Pending
+
+- [x] **#48 v3-mc bot** ✓ shipped. Wins ~85% vs v2.1 across both orientations (80% / 90% in 10-game samples). Files: `sampler.ts`, `rollout.ts`, `evaluate.ts`, `v3_mc.ts`. 8 new tests in `sampler.test.ts`. Set as `LATEST_BOT`.
+- [ ] **#49 In-game move history scrubbing** — Prev/Next/Start/End during live play; the moment a new move arrives, snap back to present. Reuses `applyMovesUpTo` + `projectView` for fog correctness. Server needs to push `setupSnapshot` once at SETUP→PLAYING; everything else is client-only.
+- [x] **#50 Small bias toward moving strong pieces** ✓ shipped. `strongMoveBonus(kind) = rank × 1.5` added as a tie-break on v3-mc's root-move mean utility and in the rollout fast-policy empty-move weight. Frozen baselines untouched. No regression — v3-mc still ~100% vs v2.1 in spot-check.
+
+<!-- Requested bot-behavior additions -->
+- [ ] **Bot: avoid revealing engineers by default** — engineers-only moves (moves that can only be performed by an engineer, e.g. corner-turn on rail or mine-clear probes) reveal piece identity; bots should prefer non-revealing alternatives unless the information gained justifies the reveal.
+- [ ] **Bot: use engineers to probe suspected mines** — engineers should be prioritized to probe cells with non-zero mine probability (probe when P(mine) > 0) to gather mine information, even if the probe is risky.
+- [ ] **Bot: avoid attacking pieces already probed stronger (except bombs)** — do not initiate combat against an opponent piece that your belief model already estimates as higher rank than your attacker, unless the defender is believed to be a bomb (special-case allow attack).
+- [ ] **Bot: slightly reduce strong-piece move bias** — lower the `strongMoveBonus` multiplier slightly (e.g. from ×1.5 to ×1.3) to reduce over-aggressive movement of top-rank pieces; add a test to verify no large regression.
+
+## v3 backlog (sequenced after v3-mc unless it plateaus)
+
+- [ ] **Flag-hypothesis advance scoring** — per opponent, ranked list of possible flag cells; each move gets `advanceValue` based on distance to the most likely candidate. HQ stays a candidate until a piece moves out of it (flags never move).
+- [ ] **Safety scoring + 司令 protection** — count unknown enemies within K moves of own flag; pull pieces back if K drops below threshold.
+- [ ] **2v2 partner coordination** — partner-aware target selection. If partner is pressuring E, this bot pressures W. If partner's 司令 dies (flag revealed), shift to defense of partner's HQ alongside own.
+- [ ] **Bomb baiting** — explicitly probe high-density unknown clusters near suspected flag cells with mid-rank pieces.
+
+## v3.1 / later
+
+- [ ] **Sampler backtracking** — replace retry-on-infeasible with proper backtracking. Only if eval shows greedy failure rate matters.
+- [ ] **Per-seat strict-fog projection inside rollouts** — currently the rollout policy assumes opponents play with full knowledge of the sampled world. Switching to per-ply projection is more correct but costlier. Only if eval shows the bias hurts.
+- [ ] **UCB tree expansion (`v3.1-mcts`)** — natural escalation if flat MC plateaus.
+- [ ] **ISMCTS** — only if flat MC + UCB both plateau.
+- [ ] **Bomb placement bias (small)** — slight column-preference for one of the two bombs at setup. Currently uniform within rows 3–4. Low priority; move-time heuristics dominate current win-rate gap.
+
+## Done
+
+All previously tracked TODO items completed. Promotions to v2 / v2.1 / strict-fog / dead-piece transparency / replay encoding / etc. are in the task ledger and BOT.md change history.
+
 - [x] A piece on a corner of a center should not impede on the curved highway (they are two different roads)
-- [x] Dead pieces should not interfere with movement
+- [x] Dead pieces should not interfere with movement (engine + bot + client all filter on `p.frozen`)
 - [x] Saved setup layouts — designer screen + encoding + paste at match start (#39)
 - [x] "Back to lobby" button after a game ends, with server-side room reset (#40)
 - [x] Engineer animation follows multi-leg rail BFS path, not straight A→B (#41)
 - [x] Smarter bot piece placement — 排长/连长 in non-flag HQ + heavyweights in interior rows + mines clustered near flag (#42)
+- [x] Bot v1 with belief tracking + resignations in game log (#43)
+- [x] v2 bot — strict fog + mine confidence + bomb offense + captures panel rebuild (#44)
+- [x] v2.1 bot — anti-shuffle filter + EV-based scoring + engineer valued at 100 (#45)
+- [x] Dead pieces no longer hinder movement (legal-move generation) (#46)
+- [x] Update README to reflect current state (#47)
 
-## Test inventory (89 passing)
+## Test inventory (110 passing)
 
 All tests live under `shared/tests/` and run with `pnpm test`.
 
-### `board.test.ts` — geometry (19 tests)
-- 4 zones × 30 + 9 central cells = 129
-- Each zone: 23 stations + 5 camps + 2 HQs
-- HQs at row 1 cols 2 and 4
-- Camps form the quincunx in rows 3–5 cols 2/3/4
-- Rail-on/off classification for HQ, ring, inner, camp, center cells
-- Central 3×3 cells: stoppable rail nodes
-- Every orthogonal in-zone neighbor is a road
-- Center camp has X-diagonals to the 4 corner camps
-- **Every camp has 8-directional adjacency (#33)**
-- **Center cell C-2-2 is transit-only (#34)**
-- No road crosses between zones
-- No road touches the central area
-- Zone ring rail cells have rail neighbors on the ring
-- Corner ring cell connects two ring directions
-- N front line connects to center top row at cols 1, 3, 5 only
-- S front line connects via 180°-rotated mapping
-- Center 3×3 connects rook-neighbors with rail
-- Non-rail cells have no rail neighbors
-- `setupCellsForZone` returns 25 placeable cells per zone
-
-### `setup.test.ts` — setup validation + smart bot setup (11 tests)
-- Random setup produces 25 placements covering all placeable cells
-- Random setup passes validation for every zone × multiple seeds
-- Random setup is deterministic given a seed
-- Flag must be in an HQ
-- Mine must be in rows 1–2
-- Bomb cannot be in front line (row 6)
-- Correct piece counts
-- **smartValidSetup (#42, 4 tests)**: produces a fully valid layout for every zone × multiple seeds; never places top-3 ranks on the HQ row; non-flag HQ holds 排长 or 连长 (never engineer / mine / heavyweight); deterministic given a seed
-
-### `moves.test.ts` — legal moves + pathOfMove (29 tests)
-- **pathOfMove (3 tests)**: road step returns [from, to]; single-direction rail slide enumerates intermediate cells through the center; engineer BFS multi-leg path through corners
-- Road moves: single orthogonal step into empty cells
-- Cannot move into a camp containing anyone
-- Center camp diagonals work both ways
-- Cannot stop on a teammate
-- HQ immobility: piece in HQ has no legal moves
-- Mines and flags have no legal moves
-- Non-engineer rail: slides clear ring in one direction
-- Non-engineer cannot turn the zone ring corner
-- Non-engineer slides straight through center to opposite zone
-- Non-engineer CAN stop in the center (perimeter cells)
-- Non-engineer at front-line cols 2/4 cannot reach center
-- Slide stops at first enemy (combat)
-- Slide blocked by ally
-- Engineer rail BFS turns corners on the ring
-- Engineer reaches adjacent-zone front lines through curve corners
-- Engineer can stop in 8 of 9 central cells (C-2-2 is transit-only)
-- Cannot attack into an enemy-occupied camp
-- Can enter an empty camp
-- **Central-corner curves (5 tests, #26)**: W→C-1-1→N, N→C-1-3→E, S→C-3-1→W; curve blocks at ally on exit; curve stops at enemy on exit
-- **Curve bypasses corner cell (3 tests, TODO #1)**: non-engineer slide curves around an enemy on C-1-1; curves around a teammate; engineer can reach across the curve when corner is blocked
-
-### `combat.test.ts` — combat resolution (9 tests)
-- Higher rank wins; lower rank loses; equal rank mutual destruction
-- Engineer defuses mine; non-engineer dies to mine (mine stays)
-- Attacking bomb / bomb attacking → mutual destruction
-- Bomb vs mine → mutual destruction
-- Any attacker captures the flag
-
-### `engine.test.ts` — state machine (14 tests)
-- `createGameState` + `submitSetup` transition to PLAYING when all four submit
-- Rejects invalid layouts
-- Move when it's not your turn → no legal moves
-- Move into empty cell, turn advances, `movesSinceCapture` increments
-- Higher-rank attacker wins, takes the cell, `lastCombat` populated
-- Engineer defuses mine in `applyMove`
-- Non-engineer dies to mine; mine stays
-- Flag capture eliminates owner, turn skips them
-- Killing Marshal triggers `flagRevealed` + `marshalDead`
-- Bomb causes mutual destruction
-- 2v2: when both team B flags fall, team A wins
-- FFA: last seat standing wins via resignation chain
-- **Dead pieces ignored by legal moves (TODO #2)**
-- **Move onto a dead piece silently removes it, no combat (TODO #2)**
-
-### `view.test.ts` — fog of war (4 tests)
-- Owner sees own pieces; opponents do not
-- Teammate pieces are hidden (strict v1 default)
-- After Marshal death, the flag becomes visible to all
-- On ENDED phase, everything is revealed
-
-### `replay.test.ts` — replay encoding (3 tests)
-- Encodes and decodes setups round-trip
-- Round-trip preserves the move list and arrives at identical final state
-- `setupsFromState` reads piece placements directly from state
+| File | Tests | Coverage |
+|---|---:|---|
+| `board.test.ts` | 19 | geometry: zones × cells, HQ / camp / station / center placement, rail-on/off classification, 8-dir camp adjacency, `C-2-2` transit-only, rail edges, road edges, no inter-zone roads, front-line→center connections, `setupCellsForZone` |
+| `setup.test.ts` | 11 | placement validation (flag in HQ, mines back two rows, bombs not row 6), random + deterministic seed, `smartValidSetup` constraints |
+| `moves.test.ts` | 31 | road steps, camp diagonals, teammate blocking, HQ immobility, mine/flag immobility, rail slides (engineer + non-engineer), corner curves, curve bypasses corner cell, `pathOfMove` (3), dead-piece transparency in `viewMoveContext` |
+| `combat.test.ts` | 9 | rank table, engineer vs mine, bomb mutual destruction, flag capture |
+| `engine.test.ts` | 14 | createGameState → submitSetup transition, applyMove + turn flow, combat outcomes, flag capture eliminates owner, Marshal-reveal, 2v2 + FFA win conditions, dead-piece transparency |
+| `view.test.ts` | 4 | strict-fog projection: own kinds visible, opponents hidden, teammates hidden, Marshal-reveal flips flag |
+| `replay.test.ts` | 6 | setup round-trip, full-game replay determinism, resign encoding, applyMovesUpTo with explicit resigns |
+| `belief.test.ts` | 11 | `estimateRank` value table, kind revelation, strict-fog inference (rank bounds from combat outcome), mine-confidence accumulation, HQ flag-candidate prior, resign skipping |
+| `bot_v2_1.test.ts` | 5 | `PIECE_VALUE` table (engineer = 旅长 = 100), v2.1 anti-shuffle, EV scoring sanity, deterministic |
 
 ## Project task ledger
 
-All **28 tracked tasks completed** (#15–#42). The full list:
+All **36 tracked tasks completed** so far. Pending: #49 in-game scrubbing, #50 strong-piece bias.
 
 | # | Status | Title |
 |---|---|---|
@@ -122,14 +82,22 @@ All **28 tracked tasks completed** (#15–#42). The full list:
 | 29 | ✓ | Setup: place all of one piece kind without re-picking each time |
 | 30 | ✓ | Animate piece moves A→B + highlight last move per player |
 | 31 | ✓ | Bot move-speed setting (slow / normal / fast / instant) |
-| 32 | ✓ | Animate moves along the actual rail/road path (non-engineer slide helper) |
-| 33 | ✓ | Camps: 8-directional adjacency (diagonals from every camp, not just center) |
-| 34 | ✓ | Central area: middle cell C(2,2) is transit-only (8 stoppable cells, not 9) |
+| 32 | ✓ | Animate moves along the actual rail/road path |
+| 33 | ✓ | Camps: 8-directional adjacency |
+| 34 | ✓ | Central area: middle cell C(2,2) is transit-only |
 | 35 | ✓ | Minimize/collapse button on the RankGuide |
 | 36 | ✓ | Turn-indicator arrow pointing into the current player's zone |
 | 37 | ✓ | Replay system: encoding scheme + step-through replay mode |
-| 38 | ✓ | TODO.md follow-ups: curve bypasses corner cell + dead pieces don't interfere |
+| 38 | ✓ | Curve bypasses corner cell + dead pieces don't interfere |
 | 39 | ✓ | Saved setup layouts — designer screen + encoding + paste at match start |
 | 40 | ✓ | Back-to-lobby button after game end |
-| 41 | ✓ | Engineer animation follows multi-leg rail BFS path (not straight A→B) |
-| 42 | ✓ | Smarter bot piece placement — avoid wasting strong pieces in the non-flag HQ |
+| 41 | ✓ | Engineer animation follows multi-leg rail BFS path |
+| 42 | ✓ | Smarter bot piece placement |
+| 43 | ✓ | Bot v1 with belief tracking + resignations in game log |
+| 44 | ✓ | v2 bot: strict fog, mine confidence, bomb offense + captures panel rebuild |
+| 45 | ✓ | v2.1 bot: anti-shuffle filter, EV-based scoring, engineer valued at 100 |
+| 46 | ✓ | Dead pieces no longer hinder movement (legal-move generation) |
+| 47 | ✓ | Update README to reflect current state |
+| 48 | ✓ | v3-mc bot: belief sampler + Monte Carlo rollouts |
+| 49 | ☐ | In-game move history scrubbing |
+| 50 | ✓ | Small bias toward moving strong pieces (don't park 司令/军长) |

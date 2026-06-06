@@ -1,12 +1,12 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useGame } from '../state.js';
 import {
   BOARD,
   PIECE_DEFS,
   PIECE_KINDS_ORDERED,
   legalMovesFromCell,
+  viewMoveContext,
   type MoveContext,
-  type PieceRef,
   type PieceKind,
   type SeatId,
 } from '@siguo/shared';
@@ -20,40 +20,41 @@ import { copyToClipboard } from '../clipboard.js';
 const SEATS: SeatId[] = ['N', 'E', 'S', 'W'];
 
 export function Play() {
-  const view = useGame((s) => s.view);
+  const liveView = useGame((s) => s.view);
+  const viewHistory = useGame((s) => s.viewHistory);
+  const scrubOffset = useGame((s) => s.scrubOffset);
+  const scrubBy = useGame((s) => s.scrubBy);
+  const setScrubOffset = useGame((s) => s.setScrubOffset);
   const seat = useGame((s) => s.seat);
   const send = useGame((s) => s.send);
   const [selected, setSelected] = useState<string | null>(null);
   const [pendingDraw, setPendingDraw] = useState(false);
 
-  const ctx: MoveContext = useMemo(() => {
-    const refs: Record<string, PieceRef> = {};
-    if (view) {
-      for (const p of view.pieces) {
-        if (p.kind !== null) {
-          refs[p.cellId] = { id: p.id, cellId: p.cellId, kind: p.kind, owner: p.owner };
-        } else {
-          refs[p.cellId] = { id: p.id, cellId: p.cellId, kind: 'PAIZHANG', owner: p.owner };
-        }
-      }
-    }
-    return {
-      pieceAt: (id) => refs[id] ?? null,
-      isAlly: (a, b) => {
-        if (!view) return a === b;
-        if (a === b) return true;
-        if (view.mode === 'ffa') return false;
-        return view.teams[a] === view.teams[b];
-      },
-    };
-  }, [view]);
+  const isScrubbing = scrubOffset < 0 && viewHistory.length > 0;
+  // The view we render: a cached past view when scrubbing, else the live one.
+  const view = isScrubbing
+    ? viewHistory[viewHistory.length - 1 + scrubOffset] ?? liveView
+    : liveView;
+
+  // Clear any selection the moment we enter a scrubbed (read-only) state.
+  useEffect(() => {
+    if (isScrubbing && selected !== null) setSelected(null);
+  }, [isScrubbing, selected]);
+
+  // Single source of truth for view → MoveContext lives in shared (frozen-piece
+  // filter, unknown-kind placeholder, isAlly logic). Reusing it here keeps the
+  // client and the bot from drifting on what "transparent to movement" means.
+  const ctx: MoveContext = useMemo(
+    () => (view ? viewMoveContext(view) : { pieceAt: () => null, isAlly: (a, b) => a === b }),
+    [view],
+  );
 
   const legal = useMemo(() => {
-    if (!view || !selected || !seat) return new Set<string>();
+    if (!view || !selected || !seat || isScrubbing) return new Set<string>();
     const piece = view.pieces.find((p) => p.cellId === selected);
     if (!piece || piece.owner !== seat) return new Set<string>();
     return new Set(legalMovesFromCell(ctx, selected));
-  }, [view, ctx, selected, seat]);
+  }, [view, ctx, selected, seat, isScrubbing]);
 
   const selectedPiece = useMemo(() => {
     if (!view || !selected) return null;
@@ -62,10 +63,12 @@ export function Play() {
 
   if (!view || !seat) return <div className="screen-center">Loading game…</div>;
 
-  const myTurn = view.turn === seat && view.phase === 'PLAYING' && !view.seats[seat].eliminated;
+  const myTurn = !isScrubbing && liveView !== null
+    && liveView.turn === seat && liveView.phase === 'PLAYING' && !liveView.seats[seat].eliminated;
 
   function handleCellClick(cellId: string) {
     if (!view) return;
+    if (isScrubbing) return;
     if (view.phase !== 'PLAYING') return;
     if (!myTurn) return;
     const piece = view.pieces.find((p) => p.cellId === cellId);
@@ -114,18 +117,38 @@ export function Play() {
 
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 280px', height: '100vh', position: 'relative' }}>
-      <div className="board-container">
-        <Board
-          pieces={view.pieces}
-          legalCells={legal}
-          selectedCell={selected}
-          onCellClick={handleCellClick}
-          flagRevealed={view.flagRevealed}
-          currentTurn={view.turn}
-          lastMoveBySeat={view.lastMoveBySeat}
-          lastCombat={view.lastCombat}
-          viewerSeat={seat}
-        />
+      <div className="board-container" style={{ position: 'relative' }}>
+        <div style={isScrubbing ? { filter: 'saturate(0.6) brightness(0.8)' } : undefined}>
+          <Board
+            pieces={view.pieces}
+            legalCells={legal}
+            selectedCell={selected}
+            onCellClick={handleCellClick}
+            flagRevealed={view.flagRevealed}
+            currentTurn={view.turn}
+            lastMoveBySeat={view.lastMoveBySeat}
+            lastCombat={view.lastCombat}
+            viewerSeat={seat}
+          />
+        </div>
+        {isScrubbing && (
+          <div
+            style={{
+              position: 'absolute', top: 8, left: '50%', transform: 'translateX(-50%)',
+              background: 'var(--accent)', color: '#0e1530', padding: '0.3rem 0.8rem',
+              borderRadius: 6, fontSize: 13, fontWeight: 600, zIndex: 10,
+            }}
+          >
+            ⏮ Viewing move {viewHistory.length - 1 + scrubOffset} of {viewHistory.length - 1}
+            {' · '}
+            <button
+              style={{ fontSize: 12, padding: '0.1rem 0.4rem', marginLeft: 4 }}
+              onClick={() => setScrubOffset(0)}
+            >
+              ← back to present
+            </button>
+          </div>
+        )}
         <PieceInspector
           kind={selectedPiece?.kind ?? null}
           color={selectedPiece ? SEAT_COLORS[selectedPiece.owner] : undefined}
@@ -140,6 +163,28 @@ export function Play() {
           <div>Turn #{view.turnIndex} — {myTurn ? <strong>your turn</strong> : <span style={{ color: SEAT_COLORS[view.turn] }}>{view.turn}'s turn</span>}</div>
           <div className="muted">Moves since last capture: {view.movesSinceCapture}/70</div>
         </div>
+
+        {viewHistory.length > 1 && (
+          <div style={{ padding: '0.5rem', background: 'var(--bg)', borderRadius: 6 }}>
+            <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>
+              Review history{isScrubbing ? ' (read-only)' : ''}
+            </div>
+            <div className="row" style={{ flexWrap: 'wrap', gap: 4 }}>
+              <button onClick={() => setScrubOffset(-(viewHistory.length - 1))} disabled={scrubOffset <= -(viewHistory.length - 1)}>⏮</button>
+              <button onClick={() => scrubBy(-1)} disabled={scrubOffset <= -(viewHistory.length - 1)}>◀ Prev</button>
+              <button onClick={() => scrubBy(1)} disabled={scrubOffset >= 0}>Next ▶</button>
+              <button onClick={() => setScrubOffset(0)} disabled={scrubOffset >= 0}>⏭ Now</button>
+            </div>
+            <input
+              type="range"
+              min={-(viewHistory.length - 1)}
+              max={0}
+              value={scrubOffset}
+              onChange={(e) => setScrubOffset(parseInt(e.target.value, 10))}
+              style={{ width: '100%', marginTop: 4 }}
+            />
+          </div>
+        )}
         <div className="col" style={{ gap: '0.35rem' }}>
           <div className="muted" style={{ fontSize: 12 }}>Players</div>
           {SEATS.map((s) => (
@@ -151,7 +196,7 @@ export function Play() {
           ))}
         </div>
         <div className="row" style={{ flexWrap: 'wrap' }}>
-          <button onClick={() => send({ type: 'Resign' })} disabled={view.phase !== 'PLAYING' || view.seats[seat].eliminated}>
+          <button onClick={() => send({ type: 'Resign' })} disabled={isScrubbing || !liveView || liveView.phase !== 'PLAYING' || liveView.seats[seat].eliminated}>
             Resign
           </button>
           <button
@@ -164,7 +209,7 @@ export function Play() {
                 setPendingDraw(false);
               }
             }}
-            disabled={view.phase !== 'PLAYING' || view.seats[seat].eliminated}
+            disabled={isScrubbing || !liveView || liveView.phase !== 'PLAYING' || liveView.seats[seat].eliminated}
           >
             {pendingDraw ? 'Cancel draw offer' : 'Offer draw'}
           </button>
@@ -176,12 +221,12 @@ export function Play() {
 
         <ChatPanel />
 
-        {view.phase === 'ENDED' && (
+        {liveView?.phase === 'ENDED' && (
           <div style={{ padding: '0.75rem', background: 'var(--bg)', borderRadius: 6 }}>
             <h3>Game over</h3>
-            {view.result?.kind === 'TEAM_WIN' && <div>Team {view.result.team} wins!</div>}
-            {view.result?.kind === 'PLAYER_WIN' && <div>{view.result.seat} wins!</div>}
-            {view.result?.kind === 'DRAW' && <div>Draw ({view.result.reason})</div>}
+            {liveView.result?.kind === 'TEAM_WIN' && <div>Team {liveView.result.team} wins!</div>}
+            {liveView.result?.kind === 'PLAYER_WIN' && <div>{liveView.result.seat} wins!</div>}
+            {liveView.result?.kind === 'DRAW' && <div>Draw ({liveView.result.reason})</div>}
             <ReplayShareButton />
             <button
               style={{ marginTop: '0.5rem' }}

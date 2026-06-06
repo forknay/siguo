@@ -6,8 +6,34 @@ import {
   type PieceRef,
   type SeatId,
 } from '../src/moves.js';
-import { zoneCellId, centerCellId } from '../src/board.js';
+import { ZONES, zoneCellId, centerCellId, type ZoneId } from '../src/board.js';
+import { viewMoveContext, legalMovesForBot } from '../src/bot/legal.js';
+import {
+  applyResign,
+  createGameState,
+  submitSetup,
+  type GameState,
+  type SeatInfo,
+} from '../src/engine.js';
+import { projectView } from '../src/view.js';
+import { randomValidSetup } from '../src/setup.js';
 import type { PieceKind } from '../src/pieces.js';
+
+function seat(id: string): SeatInfo {
+  return { playerId: id, displayName: id, isBot: false, eliminated: false, setupReady: false };
+}
+
+function freshPlayingState(seed = 1): GameState {
+  let state = createGameState('2v2', {
+    N: seat('n'), E: seat('e'), S: seat('s'), W: seat('w'),
+  });
+  for (const z of ZONES) {
+    const r = submitSetup(state, z as ZoneId, randomValidSetup(z as ZoneId, seed));
+    if ('errors' in r) throw new Error(r.errors.join(','));
+    state = r.state;
+  }
+  return state;
+}
 
 function ctxFromMap(
   map: Record<string, { owner: SeatId; kind: PieceKind }>,
@@ -219,6 +245,20 @@ describe('engineer rail BFS', () => {
   });
 });
 
+it('viewMoveContext skips frozen pieces — rail slides pass through them', () => {
+  // After N resigns, all N pieces are frozen. From E's perspective they must
+  // not appear as blockers in the view-based MoveContext.
+  let state = freshPlayingState();
+  state = applyResign(state, 'N');
+  expect(state.seats.N.eliminated).toBe(true);
+  const view = projectView(state, 'E');
+  const ctx = viewMoveContext(view);
+  for (const p of view.pieces) {
+    if (p.owner === 'N') expect(ctx.pieceAt(p.cellId)).toBeNull();
+  }
+  expect(legalMovesForBot(view, 'E').length).toBeGreaterThan(0);
+});
+
 describe('pathOfMove', () => {
   it('road step returns [from, to]', () => {
     expect(pathOfMove(zoneCellId('N', 3, 3), zoneCellId('N', 3, 4))).toEqual([
@@ -307,6 +347,48 @@ describe('central-corner curves (non-engineer)', () => {
     const moves = new Set(legalMovesFromCell(ctx, zoneCellId('W', 6, 5)));
     expect(moves.has(zoneCellId('N', 6, 1))).toBe(true);  // combat target
     expect(moves.has(zoneCellId('N', 5, 1))).toBe(false); // can't pass through
+  });
+});
+
+describe('dead pieces are transparent to movement (bot view)', () => {
+  it('a frozen opponent piece on the slide path does not block a non-engineer rail slide', async () => {
+    const { viewMoveContext, legalMovesForBot } = await import('../src/bot/legal.js');
+    // Build a synthetic PlayerView with a frozen E piece at N(4,1) sitting on
+    // N's col-1 rail, between N's piece at N(2,1) and the front line at N(6,1).
+    const view = {
+      mode: '2v2' as const,
+      teams: { N: 'A' as const, E: 'B' as const, S: 'A' as const, W: 'B' as const },
+      seats: {
+        N: { playerId: 'a', displayName: 'a', isBot: false, eliminated: false, setupReady: true },
+        E: { playerId: 'b', displayName: 'b', isBot: false, eliminated: true,  setupReady: true },
+        S: { playerId: 'c', displayName: 'c', isBot: false, eliminated: false, setupReady: true },
+        W: { playerId: 'd', displayName: 'd', isBot: false, eliminated: false, setupReady: true },
+      },
+      phase: 'PLAYING' as const,
+      turn: 'N' as const,
+      turnIndex: 0,
+      movesSinceCapture: 0,
+      flagRevealed: { N: false, E: false, S: false, W: false },
+      marshalDead: { N: false, E: false, S: false, W: false },
+      pieces: [
+        { id: 'mover', cellId: zoneCellId('N', 2, 1), owner: 'N' as SeatId, kind: 'LIANZHANG' as PieceKind, frozen: false },
+        { id: 'dead',  cellId: zoneCellId('N', 4, 1), owner: 'E' as SeatId, kind: null,                       frozen: true },
+      ],
+      lastCombat: null,
+      lastMoveBySeat: {},
+      moveHistory: [],
+      result: null,
+      viewerSeat: 'N' as SeatId,
+    };
+    const ctx = viewMoveContext(view as never);
+    // pieceAt the dead cell must return null.
+    expect(ctx.pieceAt(zoneCellId('N', 4, 1))).toBeNull();
+    // Legal moves should include cells PAST the dead piece on the rail.
+    const moves = legalMovesForBot(view as never, 'N').map((m) => m.to);
+    expect(moves).toContain(zoneCellId('N', 3, 1));
+    expect(moves).toContain(zoneCellId('N', 4, 1));
+    expect(moves).toContain(zoneCellId('N', 5, 1));
+    expect(moves).toContain(zoneCellId('N', 6, 1));
   });
 });
 

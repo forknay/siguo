@@ -18,6 +18,10 @@ const UNKNOWN_PLACEHOLDER: PieceKind = 'PAIZHANG';
 export function viewMoveContext(view: PlayerView): MoveContext {
   const byCell = new Map<string, PieceRef>();
   for (const p of view.pieces) {
+    // Dead (frozen) pieces do not hinder movement — slides pass through them,
+    // and they cannot be attacked. They mirror the engine-side filter in
+    // moveContextFor. Skip them so legalMovesForBot agrees with applyMove.
+    if (p.frozen) continue;
     byCell.set(p.cellId, {
       id: p.id,
       cellId: p.cellId,

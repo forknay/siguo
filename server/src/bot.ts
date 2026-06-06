@@ -4,8 +4,10 @@
 
 import {
   LATEST_BOT,
+  v2_1,
   botRng,
   projectView,
+  type Bot,
   type BotSpeed,
   type GameState,
   type SeatId,
@@ -19,6 +21,16 @@ const SPEED_DELAYS: Record<BotSpeed, [number, number]> = {
   instant: [0, 0],
 };
 
+/**
+ * Pick which bot plays at a given speed. The latest bot (v3-mc) runs an
+ * expensive Monte Carlo search (~100–300 ms/move) that would stall the event
+ * loop at `fast` / `instant` cadence, so those speeds fall back to the cheap
+ * v2.1 heuristic bot. `normal` / `slow` get the full planner.
+ */
+function botForSpeed(speed: BotSpeed): Bot {
+  return speed === 'fast' || speed === 'instant' ? v2_1 : LATEST_BOT;
+}
+
 export function maybeScheduleBotTurn(
   room: Room,
   onMoveApplied: () => void,
@@ -31,17 +43,17 @@ export function maybeScheduleBotTurn(
   const [min, max] = SPEED_DELAYS[room.botSpeed];
   const delay = min + Math.random() * (max - min);
   setTimeout(() => {
-    runBotMove(room, seat);
+    runBotMove(room, seat, botForSpeed(room.botSpeed));
     onMoveApplied();
   }, delay);
   return true;
 }
 
-function runBotMove(room: Room, seat: SeatId): void {
+function runBotMove(room: Room, seat: SeatId, bot: Bot): void {
   if (!room.state || room.state.phase !== 'PLAYING' || room.state.turn !== seat) return;
   const view = projectView(room.state, seat, { debug: false });
   const random = botRng(seedFor(room.state, seat));
-  const pick = LATEST_BOT.pickMove({
+  const pick = bot.pickMove({
     view,
     seat,
     history: room.state.moveHistory,

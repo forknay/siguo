@@ -4,18 +4,20 @@ Local-network playable digital version of **Si Guo Jun Qi** (Si Guo Da Zhan / �
 
 > si guo jun qi for my dad
 
-## What's in v1
+## Highlights
 
-- 4-player game, fully playable: 2v2 teams **and** free-for-all.
-- Canonical rule set: HQ immobility, engineers-only railroad corners, mines stay after non-engineer trigger, bombs cause mutual destruction, Marshal-death triggers flag-reveal, 70-move stalemate counter.
-- Server-authoritative state with per-player fog-of-war — opponents' ranks never appear in your wire payload.
-- Random-move bot can fill any empty seat (random valid setup + random legal moves).
-- LAN URL displayed on the host lobby for easy joining.
+- **4-player game**, fully playable: 2v2 teams **and** free-for-all.
+- **Canonical rule set**: HQ immobility, engineers-only railroad corners through the corner cells (with curved bypass at the four 九宫 corners), mines stay after non-engineer trigger, bombs cause mutual destruction, Marshal-death triggers flag-reveal, 70-move stalemate, all 5 camps 8-directional, central cell `C-2-2` is transit-only.
+- **Strict fog of war**. Server-authoritative state. Opponents' ranks never appear in your wire payload; combat reveals only the outcome.
+- **Heuristic bot opponent** (v2.1) — anti-shuffle filter + EV-based combat scoring (engine valued at 100 = 旅长), bomb-hunts-strong-pieces offense, mine-confidence cell filtering, smart placement. See [BOT.md](BOT.md) for the design + measured win rates.
+- **Layout designer** — craft a 25-piece opening, copy as a text encoding, paste into real-game setup. Persists recents in `localStorage`.
+- **Replay system** — every game produces a shareable text encoding; paste into the **Watch replay** tab on the landing screen to step through with Prev/Next, autoplay, and per-seat viewing perspective.
+- **LAN-friendly hosting** — server prints detected LAN URLs; lobby shows a 4-char room code.
 
 ## Tech stack
 
-- pnpm workspaces — `shared/` (engine), `server/` (Node + Socket.IO), `client/` (React + Vite + SVG).
-- TypeScript end-to-end; Zod for wire validation; Vitest for engine tests.
+- pnpm workspaces — `shared/` (engine + bots), `server/` (Node + Socket.IO), `client/` (React + Vite + SVG).
+- TypeScript end-to-end, Zod for wire validation, Vitest for engine + bot tests.
 
 ## Running it
 
@@ -60,62 +62,140 @@ siguo server listening on http://0.0.0.0:3000
 
 Anyone on the same Wi-Fi can open the URL and join the room with the 4-character code shown in the lobby.
 
+## Game features
+
+### Layout designer
+
+The **Layout designer** tab on the landing screen lets you craft a personal 25-piece opening without a network connection. The view zooms to a single zone. Click-to-place, drag-and-drop pieces, validate constraints in real time. When complete, click **Copy encoding** to put the layout text on your clipboard, or **Save to this browser** to keep up to 12 named layouts in `localStorage`.
+
+In a real game's Setup screen, open the "Paste a saved layout" details block and drop in the encoding. The engine validates it against the seat's normal constraints (flag in HQ, mines in rows 1–2, bombs not in row 6) before applying.
+
 ### Replays
 
-After a game ends, click **Generate replay link** in the side panel. The server returns a text encoding of the full game (setups + every move), which the client wraps into a URL like `http://<host>/?replay=<encoded>`. Open that URL anywhere (even after the game's room is gone) to step through every move with Prev/Next controls + a scrub bar, and toggle between the four seats' viewing perspectives.
+Click **Generate replay code** in the side panel after a game ends. The server returns a compact text encoding of the full game (mode, all 4 setups, every move + resignation). Copy it; share it anywhere; recipients paste it into the **Watch replay** tab on the landing screen.
 
-## Debug mode
+The replay UI has Prev / Next / Start / End buttons, a Play / Pause autoplay button (default 500 ms/move, matching the bot's `normal` speed), a scrub bar, and a "View as N/E/S/W" toggle so you can rewatch the same game from any seat's perspective. Replays render all pieces visible — even ones the original players never learned.
 
-Append `?debug=1` to the URL when creating or joining a room (e.g. `http://localhost:5173/?debug=1`). Your client will see every opponent's piece ranks AND the combat reveal modal will show the kinds of both combatants. Use this to verify rules, test the bot, or just spectate. Without the flag, opponent pieces stay face-down and combat shows only the outcome.
+### Debug mode
+
+Append `?debug=1` to the URL when creating or joining a room (e.g. `http://localhost:5173/?debug=1`). Your client will see every opponent's piece ranks and the combat reveal modal will show the kinds of both combatants. Without the flag, opponent pieces stay face-down and combat shows only the outcome.
+
+### Side-panel features (in-game)
+
+- **Turn indicator** chevrons just outside each zone; only the current player's is lit.
+- **Last-move highlight** rings around each seat's most-recent move (dashed source, solid destination), color-coded by seat.
+- **Your losses** panel — pieces YOU have lost, grouped by the killer seat. Under strict fog this is one of the few statistics the viewer is legitimately allowed to know.
+- **Recent moves** monospace log of the last ~10 moves with seat-colored prefixes. Resignations show as `<seat> resigned` in red.
+- **Bot speed** picker (lobby, host-only) — slow / normal / fast / instant.
+- **Resign** and **Offer draw** buttons.
+- **Back to lobby** (after game-over) — resets the room while keeping seats.
+- **Chat panel** — embedded in both lobby and play screens.
+
+### Rule-spec quick reference
+
+Each player has 25 pieces:
+
+- **司令 (Marshal, rank 9)** ×1, **军长 (General, 8)** ×1, **师长 (Major Gen, 7)** ×2, **旅长 (Brigadier, 6)** ×2, **团长 (Colonel, 5)** ×2, **营长 (Major, 4)** ×2, **连长 (Captain, 3)** ×3, **排长 (Lieutenant, 2)** ×3 — ranked soldiers (higher rank wins; equal-rank = mutual destruction).
+- **工兵 (Engineer, rank 1)** ×3 — defuses mines (only piece that can), can turn corners on railroads.
+- **炸弹 (Bomb)** ×2 — mutual destruction with whatever it touches.
+- **地雷 (Mine)** ×3 — immobile, kills any attacker except the engineer.
+- **军旗 (Flag)** ×1 — immobile, must live in one of the two HQs. Capture = elimination.
+
+Movement: one step along a road, or slide along a railroad to the first occupied cell. Non-engineers cannot turn 90° corners on the rail — except the four central-corner cells where the rail visually curves (W↔N, N↔E, S↔W, S↔E corner connections are passable by all pieces, even with someone sitting on the corner cell). The 3×3 central rail grid (九宫) is reachable from cols 1, 3, 5 of each zone's front line; 8 of its cells are stoppable; the very center (`C-2-2`) is transit-only.
+
+Combat reveals only the outcome. The two combatants don't learn each other's piece kind. Use debug mode if you want to verify rules during testing.
+
+In 2v2, partners sit opposite each other (N+S vs E+W). The game ends when both opposing flags are captured. In free-for-all, the last flag standing wins. 70 moves without a capture → stalemate draw.
+
+For the full rules reference used to drive the engine, see [the rules spec](../.claude/plans/research-the-rules-and-refactored-catmull-agent-ab7df9e1861611521.md).
+
+## Bots
+
+The current default bot is **v3-mc** (latest of five versions kept in the registry for measurement). It plays under strict fog of war using belief-sampled Monte Carlo: for each move, it draws ~20 plausible concrete worlds from its belief map, evaluates every legal move via a 6-ply rollout with the v2.1 fast policy, and picks the move with the highest mean utility. v3-mc wins ~85% vs v2.1 across orientations.
+
+Prior versions (v0–v2.1) are kept in the registry for evaluation comparisons. v2.1 specifically still plays under strict fog of war with these heuristics:
+
+- A per-piece **belief tracker** that walks `view.moveHistory` and derives rank bounds + mine-confidence scores from combat outcomes.
+- **Anti-shuffle**: never picks a move that exactly reverses its previous move with the same piece.
+- **EV-based combat scoring**: weight = `P(win)·value(target) − P(lose)·value(self) − P(tie)·blend`, using a piece-value table where engineer is valued at 100 (= 旅长 rank 6, because mine-clearing utility is scarce).
+- **Mine-confidence filtering**: non-engineer moves into cells with `mineConfidence > 0.4` are removed from the candidate list entirely. Engineers preferentially target those cells.
+- **Bomb offense**: bombs score `30 + estimatedRank × 5`, ×3 vs known 司令, ×2 vs known 军长 or HQ.
+- **Empty-move directional bias**: empty moves are weighted toward the opponent centroid.
+- **Setup**: smart layout placement (mines clustered near flag, 排长/连长 sacrificed in non-flag HQ, 司令/军长/师长 in interior rows 3–5).
+
+Measured win rates: v3-mc wins **~85% vs v2.1** across orientations; v2.1 wins ~68% vs v2 and ~75% vs v0-baseline.
+
+See [BOT.md](BOT.md) for the full design notes, version-by-version diff, and the v3 roadmap (belief-state Monte Carlo planning).
+
+### Running the bot eval
+
+```sh
+pnpm bot-eval -- --teamA v2.1-fixes --teamB v2-fog --games 30 --mode 2v2 --seed 0
+```
+
+Reports per-team win rates, average game length, pieces remaining per team, and end-reason breakdown (flag-capture / stalemate / all-resigned / draw).
 
 ## Running the tests
 
 ```sh
-pnpm test           # runs the full Vitest engine suite (~67 tests)
-pnpm -C shared test # just the engine
+pnpm test           # runs the full Vitest engine + bot suite (118 tests)
+pnpm -C shared test
 ```
+
+Test files live in `shared/tests/`:
+- `board.test.ts` (19) — geometry, rail/road edges, camps, central area
+- `setup.test.ts` (11) — placement validation + smart setup
+- `moves.test.ts` (31) — road/rail, corner rules, curve bypasses, pathOfMove, dead-piece transparency
+- `combat.test.ts` (9) — combat resolution table
+- `engine.test.ts` (14) — reducer / turn flow / win conditions / dead pieces
+- `view.test.ts` (4) — fog-of-war projection
+- `replay.test.ts` (6) — replay encoding round-trip + resign entries
+- `belief.test.ts` (11) — bot belief tracking + strict-fog inference + mine confidence
+- `bot_v2_1.test.ts` (5) — piece values + v2.1 sanity
+- `sampler.test.ts` (8) — v3-mc belief sampler: determinism, roster bounds, setup-rule constraints, rank-bound respect
 
 ## Project structure
 
 ```
-shared/   pure rule engine (no I/O)
+shared/   pure rule engine + bots (no I/O)
   board.ts        cell + edge graph
-  pieces.ts       piece roster (12 kinds × 25 pieces/player)
-  setup.ts        setup validation + random valid layout
-  moves.ts        legal-move generator (road + rail w/ corner rule)
+  pieces.ts       piece roster
+  setup.ts        validation + random + smart layout
+  moves.ts        legal-move generator (road + rail with corner curve rule + dead-piece transparency)
   combat.ts       combat resolution table
-  engine.ts       reducer + GameState
-  view.ts         fog-of-war projection per viewer
+  engine.ts       reducer + GameState + MoveRecord (move | resign discriminated)
+  view.ts         strict-fog projection per viewer
   protocol.ts     Zod schemas for every wire message
+  replay.ts       game-text encoding / decoding
+  bot/
+    types.ts      Bot interface
+    legal.ts      view-based MoveContext + legalMovesForBot
+    belief.ts     per-piece belief tracking (rank bounds + mineConfidence)
+    values.ts     piece-value table (engineer=100)
+    v0.ts         baseline (frozen for eval)
+    v1.ts         + belief-aware scoring
+    v2.ts         + strict fog + mine confidence + bomb offense
+    v2_1.ts       + anti-shuffle + EV scoring
+    sampler.ts    belief sampler (view → concrete GameState)
+    rollout.ts    v2.1-style fast policy on concrete GameState
+    evaluate.ts   terminal-aware utility for rollouts
+    v3_mc.ts      belief-sampled Monte Carlo (current default)
+    index.ts      registry, LATEST_BOT
+  scripts/
+    bot-eval.ts   bot-vs-bot eval harness
 server/   Express + Socket.IO authoritative state
   server.ts       socket handlers
   room.ts         lobby + game state machine
-  bot.ts          random-move bot driver
+  bot.ts          bot driver (calls LATEST_BOT.pickMove/pickSetup)
   net.ts          LAN IP detection
 client/   React + Vite + SVG
-  screens/        Landing, Lobby, Setup, Play
-  components/     Board, Piece, CombatReveal
+  screens/        Landing, Lobby, Setup, Play, Designer, Replay
+  components/     Board, Piece, CombatReveal, PieceInspector, RankGuide, ChatPanel
   state.ts        Zustand store + socket wiring
+  clipboard.ts    secure-context-aware copy helper
 ```
 
-## Game rules (short version)
+## Related docs
 
-Each of 4 players (N/E/S/W) sets up 25 pieces face-down in their zone:
-
-- **司令 (Marshal)**, 军长, 师长, 旅长, 团长, 营长, 连长, 排长 — ranked soldiers (higher rank wins).
-- **工兵 (Engineer)** — lowest mobile rank, but defuses mines and can turn corners on railroads.
-- **炸弹 (Bomb)** — mutual destruction with whatever it touches.
-- **地雷 (Mine)** — immobile, kills any attacker except the engineer.
-- **军旗 (Flag)** — immobile, lives in an HQ; capture = elimination.
-
-On your turn, move one piece along the printed roads (one step) or along a railroad (slide to the first occupied/blocked cell; non-engineers cannot turn the corner). The 3×3 central rail grid (九宫) is reachable from cols 1, 3, and 5 of each zone's front line, and pieces *may stop on it* — it's both a transit and a contested zone. When pieces collide, the engine resolves combat using hidden ranks. **Identities stay hidden even after combat** — players only see the outcome (which side lost which cell). Use `?debug=1` to enable an all-pieces-visible mode for testing.
-
-In 2v2, partners sit opposite each other (N+S vs E+W). The game ends when both opposing flags are captured. In free-for-all, the last flag standing wins.
-
-For the full rules reference used to drive the engine, see [the rules spec](../.claude/plans/research-the-rules-and-refactored-catmull-agent-ab7df9e1861611521.md).
-
-## Known gaps (deferred for v2)
-
-- Variant toggles in the lobby (the engine is parameterized; UI currently shows the locked v1 defaults but doesn't let you flip them yet).
-- Path-following move animations (current animations tween straight A→B; the `pathOfMove` engine helper exists so a future PR can chain transforms along the real rail/road path including curve corners).
-- Animations on bot moves at higher speeds (`instant` and `fast` may clip mid-tween).
+- [BOT.md](BOT.md) — bot design + strategy research + version-by-version diff + eval results
+- [TODO.md](TODO.md) — feature backlog + test inventory + completed-task history

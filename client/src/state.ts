@@ -37,6 +37,12 @@ interface GameStore {
   debug: boolean;
   lobby: LobbyUpdate | null;
   view: PlayerView | null;
+  /** Every PLAYING/ENDED PlayerView received, one per move. Lets the player
+   *  scrub backward through the game in real time. Each cached view was already
+   *  fog-projected by the server at its timestamp, so scrubbing leaks nothing. */
+  viewHistory: PlayerView[];
+  /** Scrub position: 0 = present (latest view), negative = N steps back. */
+  scrubOffset: number;
   pendingCombat: PendingCombat | null;
   chatLog: Array<{ name: string; text: string; ts: number }>;
   lastError: string | null;
@@ -54,6 +60,10 @@ interface GameStore {
   setPhase: (phase: Phase) => void;
   dismissCombat: () => void;
   clearError: () => void;
+  /** Move the scrub cursor by delta (clamped). Negative = back in time. */
+  scrubBy: (delta: number) => void;
+  /** Jump to an absolute scrub offset (clamped). 0 = present. */
+  setScrubOffset: (offset: number) => void;
 }
 
 function loadPersisted(): { roomCode: string | null; playerToken: string | null } {
@@ -85,6 +95,8 @@ export const useGame = create<GameStore>((set, get) => ({
   debug: DEBUG_MODE,
   lobby: null,
   view: null,
+  viewHistory: [],
+  scrubOffset: 0,
   pendingCombat: null,
   chatLog: [],
   lastError: null,
@@ -123,7 +135,7 @@ export const useGame = create<GameStore>((set, get) => ({
         case 'StateUpdate': {
           if (raw.view === null) {
             // Server reset the game back to lobby (e.g. ReturnToLobby).
-            set({ view: null, phase: 'lobby', pendingCombat: null });
+            set({ view: null, phase: 'lobby', pendingCombat: null, viewHistory: [], scrubOffset: 0 });
             break;
           }
           const view = raw.view as PlayerView;
@@ -132,7 +144,30 @@ export const useGame = create<GameStore>((set, get) => ({
             : view.phase === 'PLAYING' || view.phase === 'ENDED'
               ? 'play'
               : 'lobby';
-          set({ view, phase: newPhase });
+          set((s) => {
+            // Only accumulate a scrub timeline during PLAYING/ENDED. Dedup by
+            // move count so re-broadcasts of the same state don't yank a
+            // scrubbing player back to present.
+            if (view.phase !== 'PLAYING' && view.phase !== 'ENDED') {
+              return { view, phase: newPhase, viewHistory: [], scrubOffset: 0 };
+            }
+            const last = s.viewHistory[s.viewHistory.length - 1];
+            const isNewMove = !last || last.moveHistory.length !== view.moveHistory.length;
+            if (!isNewMove) {
+              // Same move count — just refresh the latest entry, keep scrub pos.
+              const hist = s.viewHistory.slice();
+              if (hist.length > 0) hist[hist.length - 1] = view;
+              else hist.push(view);
+              return { view, phase: newPhase, viewHistory: hist };
+            }
+            // Genuinely new move → append and snap back to present.
+            return {
+              view,
+              phase: newPhase,
+              viewHistory: [...s.viewHistory, view].slice(-400),
+              scrubOffset: 0,
+            };
+          });
           break;
         }
         case 'CombatReveal':
@@ -183,7 +218,17 @@ export const useGame = create<GameStore>((set, get) => ({
   setPhase: (phase) => set({ phase }),
   dismissCombat: () => set({ pendingCombat: null }),
   clearError: () => set({ lastError: null }),
+  scrubBy: (delta) => set((s) => ({ scrubOffset: clampOffset(s.scrubOffset + delta, s.viewHistory.length) })),
+  setScrubOffset: (offset) => set((s) => ({ scrubOffset: clampOffset(offset, s.viewHistory.length) })),
 }));
+
+/** Clamp a scrub offset to the valid range for a history of `len` views. */
+function clampOffset(offset: number, len: number): number {
+  const minOffset = -(Math.max(0, len - 1));
+  if (offset > 0) return 0;
+  if (offset < minOffset) return minOffset;
+  return offset;
+}
 
 export const leaveRoom = () => {
   clearPersisted();
@@ -193,6 +238,8 @@ export const leaveRoom = () => {
     seat: null,
     lobby: null,
     view: null,
+    viewHistory: [],
+    scrubOffset: 0,
     pendingCombat: null,
     phase: 'landing',
   });
