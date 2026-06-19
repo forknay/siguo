@@ -33,10 +33,12 @@ interface Args {
   mode: GameMode;
   seed: number;
   verbose: boolean;
+  /** Emit a single machine-readable JSON line instead of the human summary. */
+  json: boolean;
 }
 
 function parseArgs(argv: string[]): Args {
-  const args: Args = { teamA: 'v1-fog', teamB: 'v1-fog', games: 50, mode: '2v2', seed: 0, verbose: false };
+  const args: Args = { teamA: 'v1-fog', teamB: 'v1-fog', games: 50, mode: '2v2', seed: 0, verbose: false, json: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const next = () => argv[++i]!;
@@ -46,6 +48,7 @@ function parseArgs(argv: string[]): Args {
     else if (a === '--mode') args.mode = next() as GameMode;
     else if (a === '--seed') args.seed = parseInt(next(), 10);
     else if (a === '--verbose' || a === '-v') args.verbose = true;
+    else if (a === '--json') args.json = true;
   }
   return args;
 }
@@ -140,8 +143,10 @@ function main() {
   const teamA = botByName(args.teamA);
   const teamB = botByName(args.teamB);
 
-  // eslint-disable-next-line no-console
-  console.log(`Running ${args.games} ${args.mode} game(s): teamA=${teamA.name} vs teamB=${teamB.name} (seed ${args.seed})`);
+  if (!args.json) {
+    // eslint-disable-next-line no-console
+    console.log(`Running ${args.games} ${args.mode} game(s): teamA=${teamA.name} vs teamB=${teamB.name} (seed ${args.seed})`);
+  }
 
   const results: GameOutcome[] = [];
   for (let i = 0; i < args.games; i++) {
@@ -179,6 +184,17 @@ function main() {
   }
 
   const n = results.length;
+  if (args.json) {
+    // Single machine-readable line for the parallel aggregator.
+    // eslint-disable-next-line no-console
+    console.log(JSON.stringify({
+      teamA: teamA.name, teamB: teamB.name, games: n, seed: args.seed,
+      aWins, bWins, draws,
+      totalTurns, totalPiecesA, totalPiecesB,
+      endReasons: endReasonCounts,
+    }));
+    return;
+  }
   // eslint-disable-next-line no-console
   console.log('');
   // eslint-disable-next-line no-console

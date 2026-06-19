@@ -21,7 +21,9 @@ versions. Listed so we don't accidentally re-litigate them.
 - **Top-K static-score lookahead is dead.** Option A from the original v3 plan won't ship — it filters away exactly the setup/clearance moves planning is supposed to discover. v3.5 starts from sampled Monte Carlo with all legal root moves.
 - **Resignations are explicit in the encoding.** `applyResign` appends a `ResignEntry` to `moveHistory`; replay encoding has `R|<seat>` lines.
 - **Dead pieces are transparent to movement.** Engine, bot, and client all filter `p.frozen` in their `MoveContext` builders. One canonical builder (`viewMoveContext` in `shared/src/bot/legal.ts`) shared between the bot and the client.
-- **Strong-piece activation bias is tiny (`STRONG_MOVE_BIAS = 1.5` × rank).** Applied as a tie-break on v3-mc's root-move mean utility + in the rollout fast-policy empty-move weight. Far smaller than material-driven deltas, so it only breaks near-ties toward moving 司令/军长 rather than leaving them parked. Frozen baselines (v0–v2.1) are NOT modified — the bias lives only in v3-mc and its rollout.
+- **Strong-piece activation bias is tiny (`STRONG_MOVE_BIAS = 1.3` × rank).** Applied as a tie-break on the MC root-move mean utility + in the rollout fast-policy empty-move weight. Far smaller than material-driven deltas, so it only breaks near-ties toward moving 司令/军长 rather than leaving them parked. Frozen baselines (v0–v2.1) are NOT modified — the bias lives only in the MC line.
+- **Human-strategic refinements override raw self-play win rate.** v3.1's engineer reveal-avoidance, mine probing, and observed-stronger-attack penalty cost a little self-play strength vs v3-mc (which doesn't exploit those mistakes), but make the bot sounder against humans. Self-play eval is a proxy, not the objective — the objective is playing well against people.
+- **#3 (don't attack observed-stronger) is a soft penalty, not a hard prune.** A hard prune removes options the rollout could otherwise value (sacrifice, path-clear); the soft penalty nudges without amputating. Bombs are auto-excluded because a bomb never survives combat to set a `minRank`.
 - **Bot selection is speed-gated.** The server runs the expensive `v3-mc` planner at `normal`/`slow` botSpeed, and falls back to the cheap `v2.1` heuristic at `fast`/`instant` (where v3-mc's ~100–300 ms/move would stall the loop).
 
 
@@ -34,7 +36,7 @@ current implementation by playing matches.
 
 | Layer | State |
 |---|---|
-| Bot versions | ✓ `v0-baseline` · ✓ `v1-belief` · ✓ `v2-fog` · ✓ `v2.1-fixes` · ✓ `v3-mc` (active, latest) |
+| Bot versions | ✓ `v0-baseline` · ✓ `v1-belief` · ✓ `v2-fog` · ✓ `v2.1-fixes` · ✓ `v3-mc` · ✓ `v3.1-spatial` · ✓ `v4-replymin` · ✓ `v4.1-info` · ✓ `v4.2-greedy` (active, latest) |
 | Strict fog of war | ✓ `projectView` strips `attackerKind`/`defenderKind` from non-involved viewers' `moveHistory` |
 | Move selection (v2) | Strict-fog belief tracking + mine-confidence cell filtering + bomb-as-attacker heuristic |
 | Setup | `smartValidSetup` — mines clustered near flag, 排长/连长 in non-flag HQ, heavies in interior rows |
@@ -46,10 +48,11 @@ current implementation by playing matches.
 | Captures panel | ✓ Rebuilt — own losses only, grouped by killer seat |
 | Planning | ✓ `v3-mc` — belief-sampled Monte Carlo, all legal root moves × 6-ply rollouts |
 | Strong-piece bias | ✓ Small rank-weighted tie-break so heavyweights don't get parked (`strongMoveBonus`) |
-| Spatial goals | Not yet — bot doesn't know where the enemy flag is (next: v3.x) |
-| Defense | Not yet — never pulls pieces back toward own flag |
-| Bomb placement bias | Deferred — punt to v2.1 if eval shows setup-time impact |
-| 2v2 coordination | Not yet (P4) |
+| Spatial goals | ✓ `v3.1` — flag-hypothesis offense (`flaghypothesis.ts`) + flag-proximity reward in `evaluateRollout` |
+| Defense | ✓ `v3.1` — own-flag safety penalty (enemies near our HQ) in `evaluateRollout` |
+| 2v2 coordination | ✓ `v3.1` — partner-coordination root bias: press the opponent the partner isn't |
+| Bomb placement bias | ✓ `v3.1` — nudge one bomb into the flag's column at setup |
+| Bomb baiting | Deferred (user: "wait, it's more advanced") — needs information-value modeling |
 
 ### Measured win rates (30 games per orientation, deterministic seeds)
 
@@ -448,6 +451,147 @@ subsequent phases.
   `ResignEntry` to `moveHistory`; the replay encoding has `R|<seat>` lines
   alongside `M|<seat>|<from>|<to>` lines.
 
+### P4 (in progress) — v4 strength campaign (goal: >90% vs v3.1-spatial)
+
+All vs v3.1-spatial, 48 games (24 per orientation) via `bot-eval-par`:
+
+| Variant | Config delta | Net win vs v3.1 |
+|---|---|---|
+| v4-replymin | S=24 d=4, reply-min k3 ·0.7, D7 graph distances, D5 clock, I2 trade, D6 camps, C1 roster beliefs | 68.8% |
+| v4.1-info | + H1 info-value W=60, I3 urgency | 62.5% |
+| v4.1-i25-s44 | info W=25, S=44 | 66.7% |
+| v4-s44 | S=44 (compute parity: v4 d4 ≈ ½ v3.1 cost/move) | 72.9% |
+| **v4-greedy** | + greedy-ε playouts (ε=0.7) | **85.4%** |
+| v4-safe | + avoid-hanging playout term | 83.3% |
+| v4-greedy85 | greedy-ε 0.85 | 77.1% (too greedy — playout diversity lost) |
+| v4-greedy-d6 | greedy + depth 6 | 70.8% (depth STILL doesn't pay with low-noise playouts) |
+| v4-greedy-s60 | greedy + S=60 | 75.0% (sample returns flatten past ~44) |
+| v4-ucb | B1 UCB root bandit instead of racing | 18.8% (REJECTED — see IDEAS.md B1) |
+| v4-greedy-adv | + advance bias in quiet playout moves | 64.6% (over-aggressive playouts) |
+| v4-greedy-crn | + B2 common random numbers | 75.0% |
+| v4-greedy-k4 | reply-min k=4, blend 0.85 | 66.7% (more pessimism hurts) |
+| v4-greedy-setup | + E3 setup-time MC (10 candidates × 4 worlds) | 66.7% |
+| v4-stack | greedy + avoidHanging + CRN combined | 62.5% (stacking ≠ adding) |
+| **v4-greedy (capture-first argmax)** | greedy argmax fixed to take winning captures over shuffling heavies | **80.2% pooled over 96 games** (72.9% + 87.5% in 48-game halves) |
+
+| v4-noreply | greedy WITHOUT reply-min (S=64) | 68.8% (reply-min earns ~11 pts; keep) |
+| v4-lite-eval | greedy WITHOUT clock/trade/camp eval terms | 68.8% (the eval extras earn ~11 pts; keep) |
+| v4-flagurgent | ×3 flag offense/defense once a flag is revealed (loss-forensics fix) | 62.5% (over-weights the race at material's expense; soften before retrying) |
+| v4-deepreply | reply-min over BOTH opponents (k=2, k2=2) | 74.0% pooled/96 (81.3% then 66.7% — didn't replicate; k 3→2 loses more than k2 gains) |
+| v4-widescreen | 12-sample opening screen when branching > 50 | 66.7% (opening bleed is decision quality, not screen noise) |
+| v4-big | S=88 capture-first (~566ms, 2× budget) | 77.1% (flat MC saturates ~80% REGARDLESS of compute) |
+| v5-ismcts | full ISMCTS (shared tree, subset-UCB, 1500 iters) | 22.9% (REJECTED — node aliasing: combat vs an unknown piece leads to incomparable states across determinizations, so shared node stats mix worlds exactly like the root bandit did) |
+
+**The escalation ladder is now fully measured**: racing flat MC (80.2%) ≫
+UCB root bandit (18.8%) ≈ ISMCTS (22.9%). In fog combat games where a single
+move's outcome swings on the sampled identity of the defender, paired-world
+flat MC with exact near-root enumeration is structurally superior to
+UCB-style trees — determinization aliasing poisons any statistic shared
+across worlds below the root. The residual ~20% loss rate persists across
+2× compute (v4-big), so it is substantially world/setup variance under
+near-mirror play, not search error.
+
+Loss forensics (6 losses, seed block 12400, `bot-loss-analysis.ts`):
+two recurring patterns — (a) our flag falls 2–10 turns after our marshal's
+death reveals it (defense doesn't escalate on reveal), (b) 4/6 losses were
+already 300–400 material down by turn 50 (opening bleed). Pattern (a)'s
+naive fix (×3 urgency) regressed; the opening-bleed pattern (b) is unsolved
+and is the most promising target for the next campaign.
+
+Statistical reality check: 48-game evals have ±13-pt CIs; the family of greedy
+variants all sit in the 62–88% band, and single-batch "wins" (like the original
+85.4%) don't replicate reliably. Only ≥96-game pooled numbers are quoted as
+real in the final acceptance.
+
+**Outcome (2026-06-12): `v4.2-greedy` ships as LATEST_BOT.**
+Final config: S=44, d=4, racing, reply-min k3 blend 0.7, capture-first
+greedy-ε playouts (ε=0.7), full V4_SPATIAL. **80.2% net vs v3.1-spatial over
+96 pooled games** (~245 Elo), at ~310 ms/move vs v3.1's ~368 ms. The >90%
+campaign target was NOT reached: roughly 15 distinct levers were implemented
+and measured (table above); both ablations confirm the champion config is a
+local optimum of this search family. Per the escalation ladder, the remaining
+sanctioned step beyond flat-MC knobs is a true tree search / ISMCTS — deferred.
+Loss forensics (see `scripts/bot-loss-analysis.ts`) is the data-driven path to
+the next +10 points.
+
+Findings so far:
+
+- **Playout noise was the bottleneck**, exactly as the depth experiment
+  implied: greedy-ε playouts (+12.5 pts) beat every search-feature gain.
+- **H1 information value costs self-play strength** (−6 pts): v3.1 doesn't
+  punish info-ignorance the way humans do, so probes just spend material in
+  this eval. Same category as v3.1's human-strategic refinements — worth
+  keeping for human play, off the strength line. The model lives in
+  `infovalue.ts`: per-piece price `w_unknown × 1/(1+graphDist to likely
+  flag)`, credited once per piece on the first rollout combat involving one
+  of our pieces (the only combats fog reveals to us). This implements the
+  long-deferred bomb-baiting idea.
+- **B1 UCB root bandit** implemented (`MonteCarloOptions.ucb`) — pulls go to
+  `mean + bias + c·sqrt(ln N / n)`, worlds rotate every 8 pulls, values
+  clipped ±2500 so win sentinels don't kill exploration. Measurement pending.
+- I3 dead-partner urgency shipped in evaluation (`downPlayerUrgency`): trade
+  policy sign flips and flag-advance ×1.5 when playing 1v2.
+
+Pending: greedy-ε 0.85 / UCB / depth-6-greedy variants, final config pick,
+high-N ≥90% acceptance run.
+
+### P3.1 (complete) — v3.1 spatial bot
+
+v3-mc plus the v3 backlog heuristics, all built on the shared MC core (`mc.ts`,
+which v3-mc and v3.1 both call — v3-mc with defaults, v3.1 with options):
+
+- **Flag-hypothesis offense** (`flaghypothesis.ts`): ranks an opponent's flag
+  candidates (their 2 HQs, minus any HQ that's gone empty — the flag never
+  leaves, so an empty HQ never held it; revealed flags are pinned exactly).
+- **Spatial evaluation** (`evaluate.ts` + `V31_SPATIAL`): `evaluateRollout`
+  gains a flag-proximity reward (our nearest piece to each enemy flag) and an
+  own-flag safety penalty (nearest enemy to our flag). Inside the concrete
+  sampled rollout world the flag cells are known, so averaging across samples
+  gives the right expected proximity. v3-mc passes no spatial weights, so its
+  evaluation is unchanged.
+- **Partner coordination** (2v2): a root-move bias that presses the opponent
+  the partner is NOT already near, so the two bots split the map.
+- **Bomb placement bias**: `pickSetup` nudges one bomb into the flag's column
+  (rows 3–4) so an attacker breaking toward the flag is likelier to hit it.
+
+v3.1 also ships four human-strategic refinements requested separately:
+
+- **Don't reveal engineers casually** (`engineerBias`): an engineer-only move —
+  one a non-engineer couldn't make, i.e. a rail corner-turn, detected via
+  `isEngineerOnlyMove` — gets a small penalty *unless* it's probing a suspected
+  mine. A revealed engineer is a free intel gift to a human opponent.
+- **Use engineers to probe suspected mines** (`engineerBias`): bonus for an
+  engineer stepping onto a cell with `mineConfidence > 0`.
+- **Don't attack observed-stronger pieces** (`observedLosingAttackPenalty`):
+  soft penalty for attacking a piece whose observed `minRank > my rank`. Bombs
+  are excluded automatically (a bomb never survives combat, so never carries a
+  minRank). A *penalty* not a hard prune, so the rollout keeps the option when a
+  sacrifice/path-clear is worth it.
+- **Reduced strong-piece bias**: `STRONG_MOVE_BIAS` 1.5 → 1.3.
+
+**Measured results (vs v3-mc, 6 games per orientation):**
+
+The spatial features alone (flag offense/defense + partner coordination, before
+the four refinements) measured **66.7%** (seed 7000) and **83.3%** (seed 7100)
+— a clear ~75% net win over v3-mc.
+
+Adding the four human-strategic refinements brought seed-7000 back to **50.0%**
+(parity). At N=6 the swing from 66.7%→50.0% is within the noise band (a single
+game is ±17%), but the refinements clearly cost a little raw self-play strength.
+That trade is intentional and accepted: v3-mc, the self-play opponent, does not
+exploit engineer-reveals or punish doomed attacks the way a *human* will, so the
+refinements buy robustness against the actual opponent (humans) that the eval
+harness can't score. v3.1 stays at least at parity with v3-mc in self-play AND
+plays more soundly against people — so it ships as `LATEST_BOT`.
+
+(MC-vs-MC games are slow — ~250–300 turns × 4 planning seats — which caps how
+many we can run per session. Larger-N confirmation is future work.)
+
+**Tests** (`flaghypothesis.test.ts` 3 + `bot_v3_1.test.ts` 5): flag-candidate
+ranking (both HQs initially, empty HQ ruled out, `likelyFlagCell`), the reduced
+1.3 strong-move bias + rank-less zero bias, valid 25-piece setup with the bomb
+bias, and a pickMove smoke run.
+
 ### P3 (complete) — v3-mc bot with belief-sampled Monte Carlo
 
 The first non-greedy bot. For each turn:
@@ -750,6 +894,82 @@ microsecond-per-pick speed that's ~100–500 ms of compute. Acceptable for
 `slow`/`normal` botSpeed. For `fast`/`instant`, the bot driver should
 fall back to v2 directly (no lookahead). `bot-eval` gains a `--depth`
 flag; live play reads the room's botSpeed.
+
+#### Performance pass (task #52, 2026-06-11)
+
+Measured with `pnpm -C shared bot-bench -- --bot v3.1-spatial --turns 8`
+(fresh game, seed 1, S=20):
+
+| Config | avg/turn | max/turn |
+|---|---|---|
+| Baseline (D=6, full `applyMove` per ply) | 481 ms | 754 ms |
+| + `applyMoveForRollout` fast path (D=6) | 437 ms | 602 ms |
+| + racing (screen 6 → keep top 25%, min 8) at **D=9** | **372 ms** | **417 ms** |
+
+Two changes:
+
+1. **`applyMoveForRollout`** (engine.ts) — rollout-only move application that
+   skips legality re-validation (moves come from `legalMovesForTurn` /
+   `legalMovesForBot`, so validation regenerated the whole legal-move set per
+   ply for nothing), `knownToPlayers` copies, `moveHistory` array spreads
+   (which grow linearly with game length), and `lastCombat`. Keeps combat /
+   elimination / turn / win semantics and `lastMoveBySeat` (the rollout
+   policy's anti-shuffle reads it). Used at rollout plies AND for root-move
+   application in `mc.ts`.
+2. **Racing (successive halving)** in `runMonteCarlo` — after 6 screening
+   samples across every root move, only the top 25% (min 8) keep receiving
+   the remaining 14 samples. The cut ranks by `mean + rootBias` so moves
+   rescued by engineer-probe / partner-coordination biases can't be pruned
+   on raw material mean. Freed budget funds **depth 6 → 9** at lower wall
+   time. v3-mc keeps the unraced defaults (frozen baseline); v3.1 uses
+   `RACING_MC`.
+
+#### Depth-scaling experiment (task #53, 2026-06-11)
+
+Question: do deeper rollouts give linear strength gains? Method: v3.1-config
+variants at fixed S=12 with depth as the only variable, head-to-head against
+the d9 anchor, 8 games per orientation (16 per pairing) via the parallel
+harness (`bot-eval-par`, 8 workers, ~1 min per 8 games).
+
+| Variant | vs d9 anchor (16 games) |
+|---|---|
+| **d3** | **68.8%** (5/8 + 6/8) |
+| **d6** | 50.0% (5/8 + 3/8) |
+| d9 (mirror) | ~50% by construction |
+| **d12** | **31.3%** (3/8 + 2/8) |
+
+**Answer: NO — the curve is monotone DECREASING.** Shallow rollouts win.
+Interpretation: the fast playout policy is noisy; every extra simulated ply
+injects more policy noise into the returned value, diluting the root move's
+signal, while the static evaluation (material + spatial) judged *near* the
+root is comparatively reliable. This is the classic weak-playout result from
+the Go literature (strong static eval ≫ long weak rollouts).
+
+Consequences applied immediately:
+- v4 uses **depth 4** with the savings spent on more samples (S=24) and an
+  **exact opponent ply** (reply-min) — precision near the root instead of
+  noise far from it.
+- The earlier "depth 9 > depth 6" conclusion from the racing pass was
+  confounded: racing improved selection, not depth. Racing + d6 would likely
+  have done as well; the win was the budget reallocation, not the plies.
+
+#### Performance pass results
+
+Net: **50% deeper rollouts, 23% faster average, 45% lower worst-case.**
+Midgame decisions (bench `--warmup 60`) average only ~94 ms — the opening,
+with full rosters and maximal branching, is the worst case.
+
+Strength check: racing + depth-9 v3.1 beat v3-mc **75%** (seed 7300, N=4)
+— up from parity in the pre-racing config; the extra depth more than repaid
+the behavioral refinements' cost.
+
+Guard rail: `rollout_fastpath.test.ts` plays 120 random legal plies through
+`applyMove` and `applyMoveForRollout` in parallel and asserts identical
+board contents, turn order, eliminations, marshal/flag flags, and results —
+the fast path cannot silently drift from real game semantics.
+
+Further ideas (UCB root sampling, opponent-reply minimization, parallel
+eval, information-value evaluation) are tracked in [IDEAS.md](IDEAS.md).
 
 #### Safe pruning (only where strictly dominated)
 

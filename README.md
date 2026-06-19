@@ -86,6 +86,7 @@ Append `?debug=1` to the URL when creating or joining a room (e.g. `http://local
 - **Last-move highlight** rings around each seat's most-recent move (dashed source, solid destination), color-coded by seat.
 - **Your losses** panel — pieces YOU have lost, grouped by the killer seat. Under strict fog this is one of the few statistics the viewer is legitimately allowed to know.
 - **Recent moves** monospace log of the last ~10 moves with seat-colored prefixes. Resignations show as `<seat> resigned` in red.
+- **Review history** — Prev / Next / Start / Now buttons + a scrub bar to step backward through the game mid-match. The board dims and goes read-only while reviewing, and snaps back to the present automatically the moment a new move arrives. Each step shows a fog-correct past view (the client replays cached server views, so nothing hidden is leaked).
 - **Bot speed** picker (lobby, host-only) — slow / normal / fast / instant.
 - **Resign** and **Offer draw** buttons.
 - **Back to lobby** (after game-over) — resets the room while keeping seats.
@@ -111,7 +112,7 @@ For the full rules reference used to drive the engine, see [the rules spec](../.
 
 ## Bots
 
-The current default bot is **v3-mc** (latest of five versions kept in the registry for measurement). It plays under strict fog of war using belief-sampled Monte Carlo: for each move, it draws ~20 plausible concrete worlds from its belief map, evaluates every legal move via a 6-ply rollout with the v2.1 fast policy, and picks the move with the highest mean utility. v3-mc wins ~85% vs v2.1 across orientations.
+The current default bot is **v3.1-spatial** (latest of six versions kept in the registry for measurement). It plays under strict fog of war using belief-sampled Monte Carlo: for each move it draws ~20 plausible concrete worlds from its belief map, evaluates every legal move via a 6-ply rollout, and picks the highest mean utility. On top of the base planner (v3-mc) it adds flag-hypothesis offense (head toward the enemy flag), own-flag safety (defend our HQ), 2v2 partner coordination (split the map), and a flag-column bomb placement. v3.1 wins ~75% vs v3-mc, which itself wins ~85% vs v2.1.
 
 Prior versions (v0–v2.1) are kept in the registry for evaluation comparisons. v2.1 specifically still plays under strict fog of war with these heuristics:
 
@@ -131,6 +132,10 @@ See [BOT.md](BOT.md) for the full design notes, version-by-version diff, and the
 
 ```sh
 pnpm bot-eval -- --teamA v2.1-fixes --teamB v2-fog --games 30 --mode 2v2 --seed 0
+# parallel (shards across CPU cores, identical results for a given base seed):
+pnpm -C shared bot-eval-par -- --teamA v4-replymin --teamB v3.1-spatial --games 32 --seed 0 --workers 8
+# decision-latency benchmark (opening; add --warmup 60 for midgame):
+pnpm -C shared bot-bench -- --bot v4-replymin --turns 8
 ```
 
 Reports per-team win rates, average game length, pieces remaining per team, and end-reason breakdown (flag-capture / stalemate / all-resigned / draw).
@@ -138,7 +143,7 @@ Reports per-team win rates, average game length, pieces remaining per team, and 
 ## Running the tests
 
 ```sh
-pnpm test           # runs the full Vitest engine + bot suite (118 tests)
+pnpm test           # runs the full Vitest engine + bot suite (127 tests)
 pnpm -C shared test
 ```
 
@@ -153,6 +158,9 @@ Test files live in `shared/tests/`:
 - `belief.test.ts` (11) — bot belief tracking + strict-fog inference + mine confidence
 - `bot_v2_1.test.ts` (5) — piece values + v2.1 sanity
 - `sampler.test.ts` (8) — v3-mc belief sampler: determinism, roster bounds, setup-rule constraints, rank-bound respect
+- `flaghypothesis.test.ts` (3) — v3.1 flag-candidate ranking
+- `bot_v3_1.test.ts` (5) — reduced strong-move bias + v3.1 setup/move smoke
+- `rollout_fastpath.test.ts` (1) — `applyMoveForRollout` ≡ `applyMove` over 120 random plies
 
 ## Project structure
 
@@ -178,8 +186,11 @@ shared/   pure rule engine + bots (no I/O)
     v2_1.ts       + anti-shuffle + EV scoring
     sampler.ts    belief sampler (view → concrete GameState)
     rollout.ts    v2.1-style fast policy on concrete GameState
-    evaluate.ts   terminal-aware utility for rollouts
-    v3_mc.ts      belief-sampled Monte Carlo (current default)
+    evaluate.ts   terminal-aware utility (material + flag offense/defense)
+    flaghypothesis.ts  rank an opponent's flag cells
+    mc.ts         shared belief-sampled Monte Carlo core
+    v3_mc.ts      base Monte Carlo (frozen for measurement)
+    v3_1.ts       + flag offense/defense + partner coord (current default)
     index.ts      registry, LATEST_BOT
   scripts/
     bot-eval.ts   bot-vs-bot eval harness
@@ -198,4 +209,5 @@ client/   React + Vite + SVG
 ## Related docs
 
 - [BOT.md](BOT.md) — bot design + strategy research + version-by-version diff + eval results
+- [IDEAS.md](IDEAS.md) — improvement brainstorm (search perf/quality, beliefs, eval, setup, tooling)
 - [TODO.md](TODO.md) — feature backlog + test inventory + completed-task history

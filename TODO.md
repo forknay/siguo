@@ -1,23 +1,51 @@
 # TODO
 
+## In progress — #54 v4 strength campaign (goal: >90% vs v3.1-spatial)
+
+- [x] **Depth-scaling experiment** — answer: NO linear gains, deeper is WORSE
+  (d3 > d9 > d12; see BOT.md). Compute now buys samples + near-root precision.
+- [x] **v4-replymin** — B4 reply-min, D7 graph distances, D5 clock, I2 trade
+  policy, D6 camp refuge, C1 roster-aware beliefs. 68.8% vs v3.1 (48 games).
+- [x] **v4.1-info** — H1 information-value (the deferred bomb-baiting model,
+  `infovalue.ts`) + I3 dead-partner urgency. Self-play 62.5%: info COSTS
+  strength vs bots that don't punish info-ignorance; keep for human play.
+- [x] **Sample scaling at compute parity** — v4-s44: 72.9% (v4 d4 ≈ ½ of
+  v3.1's per-move cost, so S=24→44 is free).
+- [x] **B7 greedy-ε playouts** — v4-greedy (S=44, ε=0.7): **85.4%**. The
+  noise-reduction lever the depth experiment pointed at.
+- [x] **B8 avoid-hanging playout term** — v4-safe; first orientation 83.3%.
+- [x] **B1 UCB root bandit** — implemented and REJECTED (18.8% — breaks
+  paired-world comparisons; see IDEAS.md B1 post-mortem).
+- [x] **Capture-first greedy argmax fix** — attack weights (EV/5) and quiet
+  weights (1+strongBonus) were on different scales, so greedy playouts
+  preferred shuffling 司令 to taking free material.
+- [x] **Ablations** — no-reply-min 68.8%, no-eval-extras 68.8%: both confirm
+  the full config; also CRN 75.0%, k4 66.7%, setup-MC 66.7%, stack 62.5%,
+  advance-bias 64.6% — every other lever measured worse.
+- [x] **Final pick: `v4.2-greedy` shipped as LATEST_BOT** — 80.2% net vs
+  v3.1-spatial over 96 pooled games at lower per-move cost. The >90% target
+  was NOT reached; flat-MC knob space is exhausted (next step would be a true
+  tree search / ISMCTS, or data-driven fixes from loss forensics:
+  `scripts/bot-loss-analysis.ts`).
+
 ## Pending
 
 - [x] **#48 v3-mc bot** ✓ shipped. Wins ~85% vs v2.1 across both orientations (80% / 90% in 10-game samples). Files: `sampler.ts`, `rollout.ts`, `evaluate.ts`, `v3_mc.ts`. 8 new tests in `sampler.test.ts`. Set as `LATEST_BOT`.
-- [ ] **#49 In-game move history scrubbing** — Prev/Next/Start/End during live play; the moment a new move arrives, snap back to present. Reuses `applyMovesUpTo` + `projectView` for fog correctness. Server needs to push `setupSnapshot` once at SETUP→PLAYING; everything else is client-only.
+- [x] **#49 In-game move history scrubbing** ✓ shipped. Simpler than the original sketch: the client caches every fog-projected `PlayerView` it receives (one per move) in `viewHistory`, and scrubbing just shows a cached past view — no reconstruction, no server changes, fog automatically correct. Prev/Next/Start/Now + scrub bar in the Play side panel; board dims + goes read-only while scrubbed; auto-snaps to present on each new move (dedup by move count). Limitation: scrub history resets on reconnect (client only has views received since connecting).
 - [x] **#50 Small bias toward moving strong pieces** ✓ shipped. `strongMoveBonus(kind) = rank × 1.5` added as a tie-break on v3-mc's root-move mean utility and in the rollout fast-policy empty-move weight. Frozen baselines untouched. No regression — v3-mc still ~100% vs v2.1 in spot-check.
 
-<!-- Requested bot-behavior additions -->
-- [ ] **Bot: avoid revealing engineers by default** — engineers-only moves (moves that can only be performed by an engineer, e.g. corner-turn on rail or mine-clear probes) reveal piece identity; bots should prefer non-revealing alternatives unless the information gained justifies the reveal.
-- [ ] **Bot: use engineers to probe suspected mines** — engineers should be prioritized to probe cells with non-zero mine probability (probe when P(mine) > 0) to gather mine information, even if the probe is risky.
-- [ ] **Bot: avoid attacking pieces already probed stronger (except bombs)** — do not initiate combat against an opponent piece that your belief model already estimates as higher rank than your attacker, unless the defender is believed to be a bomb (special-case allow attack).
-- [ ] **Bot: slightly reduce strong-piece move bias** — lower the `strongMoveBonus` multiplier slightly (e.g. from ×1.5 to ×1.3) to reduce over-aggressive movement of top-rank pieces; add a test to verify no large regression.
+<!-- Requested bot-behavior additions — all shipped in v3.1 (#51) -->
+- [x] **Bot: avoid revealing engineers by default** — v3.1 `engineerBias` penalizes engineer-only moves (rail corner-turns a non-engineer couldn't make, detected via `isEngineerOnlyMove`) unless the move probes a suspected mine.
+- [x] **Bot: use engineers to probe suspected mines** — v3.1 `engineerBias` gives a bonus for an engineer moving onto a cell with `mineConfidence > 0`.
+- [x] **Bot: avoid attacking pieces already probed stronger (except bombs)** — v3.1 `observedLosingAttackPenalty`: soft penalty for attacking a piece whose observed `minRank > my rank`. Bombs are excluded automatically (a bomb never survives combat, so never carries a minRank). Made a soft penalty (not a hard prune) so the rollout keeps the option when the simulated payoff justifies it.
+- [x] **Bot: slightly reduce strong-piece move bias** — `STRONG_MOVE_BIAS` lowered ×1.5 → ×1.3; regression test in `bot_v3_1.test.ts`.
 
-## v3 backlog (sequenced after v3-mc unless it plateaus)
+## v3 backlog — shipped in v3.1 (#51)
 
-- [ ] **Flag-hypothesis advance scoring** — per opponent, ranked list of possible flag cells; each move gets `advanceValue` based on distance to the most likely candidate. HQ stays a candidate until a piece moves out of it (flags never move).
-- [ ] **Safety scoring + 司令 protection** — count unknown enemies within K moves of own flag; pull pieces back if K drops below threshold.
-- [ ] **2v2 partner coordination** — partner-aware target selection. If partner is pressuring E, this bot pressures W. If partner's 司令 dies (flag revealed), shift to defense of partner's HQ alongside own.
-- [ ] **Bomb baiting** — explicitly probe high-density unknown clusters near suspected flag cells with mid-rank pieces.
+- [x] **Flag-hypothesis advance scoring** — `flaghypothesis.ts` ranks flag candidates; `evaluateRollout` flag-proximity reward.
+- [x] **Safety scoring + 司令 protection** — `evaluateRollout` own-flag safety penalty; Marshal-alive bonus carried from v3-mc.
+- [x] **2v2 partner coordination** — `partnerCoordinationBias` root bias to press the un-pressured opponent.
+- [ ] **Bomb baiting** — DEFERRED (user: "wait, it's more advanced"). Needs information-value modeling the material eval doesn't capture.
 
 ## v3.1 / later
 
@@ -43,7 +71,7 @@ All previously tracked TODO items completed. Promotions to v2 / v2.1 / strict-fo
 - [x] Dead pieces no longer hinder movement (legal-move generation) (#46)
 - [x] Update README to reflect current state (#47)
 
-## Test inventory (110 passing)
+## Test inventory (126 passing)
 
 All tests live under `shared/tests/` and run with `pnpm test`.
 
@@ -58,10 +86,13 @@ All tests live under `shared/tests/` and run with `pnpm test`.
 | `replay.test.ts` | 6 | setup round-trip, full-game replay determinism, resign encoding, applyMovesUpTo with explicit resigns |
 | `belief.test.ts` | 11 | `estimateRank` value table, kind revelation, strict-fog inference (rank bounds from combat outcome), mine-confidence accumulation, HQ flag-candidate prior, resign skipping |
 | `bot_v2_1.test.ts` | 5 | `PIECE_VALUE` table (engineer = 旅长 = 100), v2.1 anti-shuffle, EV scoring sanity, deterministic |
+| `sampler.test.ts` | 8 | v3-mc belief sampler: determinism, roster bounds (≤count, sum 25), setup-rule + rank-bound respect, own-kind preservation, infeasible path |
+| `flaghypothesis.test.ts` | 3 | v3.1 flag-candidate ranking: both HQs initial, empty HQ ruled out, `likelyFlagCell` |
+| `bot_v3_1.test.ts` | 5 | reduced 1.3 strong-move bias, rank-less zero bias, v3.1 valid setup + move smoke |
 
 ## Project task ledger
 
-All **36 tracked tasks completed** so far. Pending: #49 in-game scrubbing, #50 strong-piece bias.
+All tracked tasks #15–#51 completed. Remaining backlog is the gated "v3.1 / later" escalations (UCB tree, ISMCTS, sampler backtracking, per-seat rollout fog) — all explicitly conditional on the current approach plateauing, which it hasn't — plus bomb-baiting (user-deferred as advanced).
 
 | # | Status | Title |
 |---|---|---|
@@ -99,5 +130,6 @@ All **36 tracked tasks completed** so far. Pending: #49 in-game scrubbing, #50 s
 | 46 | ✓ | Dead pieces no longer hinder movement (legal-move generation) |
 | 47 | ✓ | Update README to reflect current state |
 | 48 | ✓ | v3-mc bot: belief sampler + Monte Carlo rollouts |
-| 49 | ☐ | In-game move history scrubbing |
+| 49 | ✓ | In-game move history scrubbing |
 | 50 | ✓ | Small bias toward moving strong pieces (don't park 司令/军长) |
+| 51 | ✓ | v3.1 bot: flag-hypothesis + safety + partner coord + bomb bias + engineer/attack refinements |

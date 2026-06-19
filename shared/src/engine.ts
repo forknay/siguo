@@ -421,6 +421,117 @@ export function applyMove(
   };
 }
 
+/**
+ * Rollout-only fast move application. Identical combat / elimination / turn /
+ * win-condition semantics to `applyMove`, but skips everything a Monte Carlo
+ * simulation doesn't need:
+ *
+ *   - NO legality validation — the caller must pass a move that came from
+ *     `legalMovesForTurn` (the engine would otherwise regenerate the full
+ *     legal-move set per ply just to re-check it).
+ *   - NO `knownToPlayers` updates (rollouts run in a concrete sampled world).
+ *   - NO `moveHistory` append (the array spread grows linearly with game
+ *     length — by midgame that's 100+ entries copied per simulated ply).
+ *   - NO `lastCombat` record.
+ *
+ * `lastMoveBySeat` IS maintained — the rollout policy's anti-shuffle filter
+ * reads it. Never use this for real games: it trusts the caller blindly.
+ */
+export function applyMoveForRollout(
+  state: GameState,
+  seat: SeatId,
+  from: string,
+  to: string,
+): GameState {
+  const piece = pieceAt(state, from)!;
+  const rawTarget = pieceAt(state, to);
+  const targetIsFrozen = rawTarget ? state.seats[rawTarget.owner].eliminated : false;
+  const target = rawTarget && !targetIsFrozen ? rawTarget : null;
+
+  const newPieces = { ...state.pieces };
+  const newCellIndex = { ...state.cellIndex };
+  let movesSinceCapture = state.movesSinceCapture + 1;
+  let newMarshalDead = state.marshalDead;
+  let newFlagRevealed = state.flagRevealed;
+  const eliminatedSeats: SeatId[] = [];
+
+  const markMarshalDead = (owner: SeatId) => {
+    if (newMarshalDead === state.marshalDead) {
+      newMarshalDead = { ...state.marshalDead };
+      newFlagRevealed = { ...state.flagRevealed };
+    }
+    newMarshalDead[owner] = true;
+    newFlagRevealed[owner] = true;
+  };
+
+  if (!target) {
+    if (targetIsFrozen && rawTarget) delete newPieces[rawTarget.id];
+    delete newCellIndex[from];
+    newCellIndex[to] = piece.id;
+    newPieces[piece.id] = { ...piece, cellId: to };
+  } else {
+    const result = resolveCombat(piece.kind, target.kind);
+    delete newCellIndex[from];
+    if (result.outcome.winner === 'attacker') {
+      delete newPieces[target.id];
+      newCellIndex[to] = piece.id;
+      newPieces[piece.id] = { ...piece, cellId: to };
+      if (target.kind === 'JUNQI') eliminatedSeats.push(target.owner);
+      if (target.kind === 'SILING' && !newMarshalDead[target.owner]) markMarshalDead(target.owner);
+      movesSinceCapture = 0;
+    } else if (result.outcome.winner === 'defender') {
+      delete newPieces[piece.id];
+      if (piece.kind === 'SILING' && !newMarshalDead[piece.owner]) markMarshalDead(piece.owner);
+      movesSinceCapture = 0;
+    } else {
+      delete newPieces[piece.id];
+      delete newPieces[target.id];
+      delete newCellIndex[to];
+      if (target.kind === 'JUNQI') eliminatedSeats.push(target.owner);
+      if (piece.kind === 'SILING' && !newMarshalDead[piece.owner]) markMarshalDead(piece.owner);
+      if (target.kind === 'SILING' && !newMarshalDead[target.owner]) markMarshalDead(target.owner);
+      movesSinceCapture = 0;
+    }
+  }
+
+  let newSeats = state.seats;
+  if (eliminatedSeats.length > 0) {
+    newSeats = { ...state.seats };
+    for (const elim of eliminatedSeats) {
+      newSeats[elim] = { ...newSeats[elim], eliminated: true };
+    }
+  }
+
+  let nextTurn = nextSeat(state.turn);
+  let safety = 4;
+  while (newSeats[nextTurn].eliminated && safety-- > 0) {
+    nextTurn = nextSeat(nextTurn);
+  }
+
+  let phase: GameState['phase'] = state.phase;
+  let result: GameResult | null = null;
+  const endResult = computeEnd(state.mode, newSeats, movesSinceCapture);
+  if (endResult) {
+    phase = 'ENDED';
+    result = endResult;
+  }
+
+  return {
+    ...state,
+    pieces: newPieces,
+    cellIndex: newCellIndex,
+    seats: newSeats,
+    marshalDead: newMarshalDead,
+    flagRevealed: newFlagRevealed,
+    turn: nextTurn,
+    turnIndex: state.turnIndex + 1,
+    movesSinceCapture,
+    lastMoveBySeat: { ...state.lastMoveBySeat, [seat]: { from, to } },
+    phase,
+    result,
+  };
+}
+
 /** Voluntary resignation by a seat. */
 export function applyResign(state: GameState, seat: SeatId): GameState {
   if (state.phase !== 'PLAYING') return state;

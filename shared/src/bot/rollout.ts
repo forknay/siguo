@@ -6,41 +6,160 @@
 // opponent skill. First-pass simplification; see BOT.md § Rollout policy.
 
 import {
-  applyMove,
+  applyMoveForRollout,
   applyResign,
   legalMovesForTurn,
   type GameState,
   type SeatId,
 } from '../engine.js';
-import { getCell } from '../board.js';
+import { getCell, getRoadNeighbors } from '../board.js';
+import { TEAMS_2V2 } from '../engine.js';
 import { PIECE_DEFS, type PieceKind } from '../pieces.js';
 import { PIECE_VALUE, strongMoveBonus } from './values.js';
+import { creditCombatInfo, type InfoTracker } from './infovalue.js';
+import { moveDistance } from './distances.js';
+
+export interface PlayoutPolicy {
+  /**
+   * Probability of playing the argmax-weight move at each ply instead of a
+   * weighted draw. The weighted draw injects a lot of variance into rollout
+   * values (the depth experiment showed playout noise dominates); a greedier
+   * playout estimates "reasonable continuation" with less noise. Keep < 1 so
+   * rollouts still explore (and to avoid deterministic playout blind spots).
+   */
+  greedyEps: number;
+  /**
+   * Penalize quiet moves onto squares a stronger adjacent enemy (or a bomb)
+   * could capture next ply (×0.2 weight). The unmodified policy hangs pieces
+   * constantly, which is SYSTEMATIC rollout error, not just variance — every
+   * line through a hung piece undervalues the position. Road/camp adjacency
+   * approximation (rail snipes not checked); camps are attack-proof, so
+   * destinations in camps are never "hanging".
+   */
+  avoidHanging?: boolean;
+  /**
+   * Additive weight for quiet moves that reduce graph distance to the nearest
+   * enemy flag (and −1× for moves that increase it). Greedy playouts argmax
+   * over quiet weights that are otherwise near-uniform (1 + strong bonus), so
+   * without a directional term "greedy" quiet play is arbitrary shuffling.
+   */
+  advanceBias?: number;
+}
 
 /** Step the state forward `depth` plies using the fast policy. */
 export function playOutFromSampled(
   initial: GameState,
   depth: number,
   rng: () => number,
+  info?: InfoTracker,
+  policy?: PlayoutPolicy,
 ): GameState {
   let state = initial;
   for (let d = 0; d < depth; d++) {
     if (state.phase !== 'PLAYING') break;
     const seat = state.turn;
     if (state.seats[seat].eliminated) break; // engine should have advanced; safety
-    const pick = fastPickMove(state, seat, rng);
+    const pick = fastPickMove(state, seat, rng, policy);
     if (!pick) {
       state = applyResign(state, seat);
       continue;
     }
-    const r = applyMove(state, seat, pick.from, pick.to);
-    if ('error' in r) {
-      // Shouldn't happen for legal moves, but be defensive.
-      state = applyResign(state, seat);
-      continue;
-    }
-    state = r.state;
+    if (info) creditCombatInfo(info, state, pick.from, pick.to);
+    // The pick came from legalMovesForTurn, so we can skip re-validation and
+    // all the bookkeeping a real game needs (history, knowledge sets).
+    state = applyMoveForRollout(state, seat, pick.from, pick.to);
   }
   return state;
+}
+
+interface ScoredMove { from: string; to: string; weight: number; isAttack: boolean }
+
+/** Score every legal move for the current seat (shared by the rollout policy
+ *  and the reply-minimization probe). Anti-shuffle applied. Deterministic. */
+function scoreMoves(state: GameState, seat: SeatId, policy?: PlayoutPolicy): ScoredMove[] {
+  const moves = legalMovesForTurn(state);
+  const myLast = state.lastMoveBySeat[seat];
+  const out: ScoredMove[] = [];
+  // Enemy flag cells (concrete in the sampled world) for the advance bias.
+  let enemyFlags: string[] | null = null;
+  if (policy?.advanceBias) {
+    enemyFlags = [];
+    const myTeam = state.mode === '2v2' ? TEAMS_2V2[seat] : null;
+    for (const p of Object.values(state.pieces)) {
+      if (p.kind !== 'JUNQI' || state.seats[p.owner].eliminated) continue;
+      const enemy = state.mode === '2v2' ? TEAMS_2V2[p.owner] !== myTeam : p.owner !== seat;
+      if (enemy) enemyFlags.push(p.cellId);
+    }
+  }
+  for (const m of moves) {
+    if (myLast && m.from === myLast.to && m.to === myLast.from) continue;
+    const myPieceId = state.cellIndex[m.from];
+    const targetId = state.cellIndex[m.to];
+    if (!myPieceId) continue;
+    const myKind = state.pieces[myPieceId]!.kind;
+    const target = targetId ? state.pieces[targetId] : undefined;
+    if (!target) {
+      // Base weight 1 + a small strong-piece activation bias so rollouts don't
+      // leave heavyweights parked (mirrors the root-level bias in v3-mc).
+      let weight = 1 + strongMoveBonus(myKind);
+      if (enemyFlags && enemyFlags.length > 0 && policy?.advanceBias) {
+        let before = Infinity;
+        let after = Infinity;
+        for (const f of enemyFlags) {
+          const db = moveDistance(m.from, f);
+          const da = moveDistance(m.to, f);
+          if (db < before) before = db;
+          if (da < after) after = da;
+        }
+        weight += policy.advanceBias * Math.sign(before - after);
+      }
+      if (policy?.avoidHanging && hangsAt(state, seat, myKind, m.to)) weight *= 0.2;
+      out.push({ from: m.from, to: m.to, weight, isAttack: false });
+    } else {
+      // Same-team is filtered by legalMovesForTurn; nothing to do here.
+      out.push({ from: m.from, to: m.to, weight: fastScoreAttack(myKind, target.kind, m.to), isAttack: true });
+    }
+  }
+  return out;
+}
+
+/** Would `myKind` standing on `to` be capturable by a stronger road-adjacent enemy? */
+function hangsAt(state: GameState, seat: SeatId, myKind: PieceKind, to: string): boolean {
+  if (myKind === 'ZHADAN') return false; // a bomb "hanging" trades up
+  if (getCell(to).type === 'CAMP') return false; // camps are attack-proof
+  const myRank = PIECE_DEFS[myKind].rank ?? 0;
+  const myTeam = state.mode === '2v2' ? TEAMS_2V2[seat] : null;
+  for (const nb of getRoadNeighbors(to)) {
+    const pid = state.cellIndex[nb];
+    if (!pid) continue;
+    const p = state.pieces[pid]!;
+    const enemy = state.mode === '2v2' ? TEAMS_2V2[p.owner] !== myTeam : p.owner !== seat;
+    if (!enemy) continue;
+    if (p.kind === 'ZHADAN') return true;
+    const r = PIECE_DEFS[p.kind].rank;
+    if (r !== null && r > myRank) return true;
+  }
+  return false;
+}
+
+/**
+ * Opponent's strongest K replies by the fast policy's own scoring — used by
+ * B4 reply-minimization to ask "what's the worst they can do to me next ply?".
+ * Deterministic (no sampling): top attacks first, then best quiet move so a
+ * pure-positional refutation (e.g. stepping onto our flag lane) is included.
+ */
+export function fastTopKMoves(state: GameState, k: number): Array<{ from: string; to: string }> {
+  const scored = scoreMoves(state, state.turn);
+  if (scored.length === 0) return [];
+  scored.sort((a, b) => b.weight - a.weight);
+  const top = scored.slice(0, k);
+  // Ensure at least one quiet move is represented if the top-K are all attacks.
+  if (top.every((m) => m.isAttack)) {
+    const quiet = scored.find((m) => !m.isAttack);
+    if (quiet && top.length >= k) top[top.length - 1] = quiet;
+    else if (quiet) top.push(quiet);
+  }
+  return top.map(({ from, to }) => ({ from, to }));
 }
 
 /**
@@ -52,40 +171,35 @@ function fastPickMove(
   state: GameState,
   seat: SeatId,
   rng: () => number,
+  policy?: PlayoutPolicy,
 ): { from: string; to: string } | null {
-  const moves = legalMovesForTurn(state);
-  if (moves.length === 0) return null;
-
-  const myLast = state.lastMoveBySeat[seat];
-
-  const attacks: Array<{ from: string; to: string; weight: number }> = [];
-  const empties: Array<{ from: string; to: string; weight: number }> = [];
-
-  for (const m of moves) {
-    // Anti-shuffle.
-    if (myLast && m.from === myLast.to && m.to === myLast.from) continue;
-
-    const myPieceId = state.cellIndex[m.from];
-    const targetId = state.cellIndex[m.to];
-    if (!myPieceId) continue;
-    const myKind = state.pieces[myPieceId]!.kind;
-    const target = targetId ? state.pieces[targetId] : undefined;
-
-    if (!target) {
-      // Base weight 1 + a small strong-piece activation bias so rollouts don't
-      // leave heavyweights parked (mirrors the root-level bias in v3-mc).
-      empties.push({ from: m.from, to: m.to, weight: 1 + strongMoveBonus(myKind) });
-      continue;
-    }
-    // Same-team is filtered by legalMovesForTurn; nothing to do here.
-    const w = fastScoreAttack(myKind, target.kind, m.to);
-    attacks.push({ from: m.from, to: m.to, weight: w });
-  }
-
-  if (attacks.length === 0 && empties.length === 0) {
+  const scored = scoreMoves(state, seat, policy);
+  if (scored.length === 0) {
+    const moves = legalMovesForTurn(state);
+    if (moves.length === 0) return null;
     const fallback = moves[Math.floor(rng() * moves.length)]!;
     return { from: fallback.from, to: fallback.to };
   }
+  if (policy && rng() < policy.greedyEps) {
+    // Capture-first argmax. Attack weights (EV/5, a clean 排长 capture ≈ 5)
+    // and quiet weights (1 + strongMoveBonus, up to ~13 for 司令) live on
+    // different scales, so a single argmax would prefer shuffling heavyweights
+    // over taking free material. Play the best clearly-winning attack if one
+    // exists; otherwise the best quiet move.
+    let bestAttack: ScoredMove | null = null;
+    let bestQuiet: ScoredMove | null = null;
+    for (const m of scored) {
+      if (m.isAttack) {
+        if (!bestAttack || m.weight > bestAttack.weight) bestAttack = m;
+      } else if (!bestQuiet || m.weight > bestQuiet.weight) {
+        bestQuiet = m;
+      }
+    }
+    const best = bestAttack && bestAttack.weight > 4 ? bestAttack : bestQuiet ?? bestAttack!;
+    return { from: best.from, to: best.to };
+  }
+  const attacks = scored.filter((m) => m.isAttack);
+  const empties = scored.filter((m) => !m.isAttack);
   // v2.1's adaptive attack share.
   const maxAttackWeight = attacks.reduce((m, a) => Math.max(m, a.weight), 0);
   const attackShare = maxAttackWeight >= 30 ? 0.9 : 0.7;

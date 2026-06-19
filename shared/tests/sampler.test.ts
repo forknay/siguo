@@ -71,7 +71,7 @@ describe('sampleConcreteWorld', () => {
     for (const s of ZONES) {
       let total = 0;
       for (const k of PIECE_KINDS_ORDERED) {
-        const c = perSeat[s][k] ?? 0;
+        const c = perSeat[s]![k] ?? 0;
         expect(c).toBeLessThanOrEqual(ROSTER[k]);
         total += c;
       }

@@ -32,7 +32,7 @@ export const PIECE_VALUE: Record<PieceKind, number> = {
  * to combat-EV magnitudes — it only breaks ties between otherwise-similar moves.
  * Specials (bomb/mine/flag) have rank null → 0 bias.
  */
-export const STRONG_MOVE_BIAS = 1.5;
+export const STRONG_MOVE_BIAS = 1.3;
 
 export function strongMoveBonus(kind: PieceKind): number {
   return (PIECE_DEFS[kind].rank ?? 0) * STRONG_MOVE_BIAS;

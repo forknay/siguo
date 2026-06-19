@@ -66,10 +66,30 @@ export function computeBeliefs(view: PlayerView, viewerSeat: SeatId): Map<string
   // Map cellId → current trail (bounds + mine hits for the piece sitting there).
   const cellTrails = new Map<string, CellTrail>();
   const movedIntoCell = new Set<string>();
+  // C1 roster conditioning: kinds we KNOW died per seat (combats we took part
+  // in expose our counterpart's kind only when WE owned the piece — so this
+  // tracks our own dead, and opponents' dead only via public reveals below).
+  const deadKnownKinds = new Map<SeatId, PieceKind[]>();
+  const addDead = (seat: SeatId, kind: PieceKind | undefined) => {
+    if (!kind) return;
+    const list = deadKnownKinds.get(seat) ?? [];
+    list.push(kind);
+    deadKnownKinds.set(seat, list);
+  };
 
   for (const rec of view.moveHistory) {
     if (isResignEntry(rec)) continue;
     const { from, to, combat } = rec;
+    if (combat) {
+      // Record kind-known deaths (fields are fog-filtered by projectView, so
+      // whatever is present here the viewer legitimately knows).
+      if (combat.winner === 'attacker' || combat.winner === 'tie') {
+        addDead(combat.defenderSeat, combat.defenderKind);
+      }
+      if (combat.winner === 'defender' || combat.winner === 'tie') {
+        addDead(rec.seat, combat.attackerKind);
+      }
+    }
     // movedIntoCell is updated per-branch below; defender-survives must NOT
     // mark the cell as moved-into because the defender hasn't moved.
 
@@ -132,6 +152,19 @@ export function computeBeliefs(view: PlayerView, viewerSeat: SeatId): Map<string
     }
   }
 
+  // Public reveal: a dead Marshal is known to everyone even without combat
+  // involvement (the flag-reveal rule announces it).
+  for (const seat of ['N', 'E', 'S', 'W'] as SeatId[]) {
+    if (view.marshalDead[seat] && !(deadKnownKinds.get(seat) ?? []).includes('SILING')) {
+      addDead(seat, 'SILING');
+    }
+  }
+
+  // C1: per-seat average rank of the UNKNOWN ranked pool — the roster minus
+  // kinds we know are alive (visible kinds) minus kinds we know died. If all
+  // an opponent's 排长 are confirmed dead, their unknown movers skew stronger.
+  const poolAvgBySeat = computeUnknownPoolAverages(view, deadKnownKinds);
+
   for (const p of view.pieces) {
     const cell = getCell(p.cellId);
     const inHQ = cell.type === 'HQ';
@@ -160,7 +193,10 @@ export function computeBeliefs(view: PlayerView, viewerSeat: SeatId): Map<string
       knownKind,
       minRank: trail.minRank ?? null,
       maxRank: trail.maxRank ?? null,
-      estimatedRank: estimateRank(knownKind, hasMoved, inHQ, inBackRow, trail.minRank, mineConfidence),
+      estimatedRank: estimateRank(
+        knownKind, hasMoved, inHQ, inBackRow, trail.minRank, mineConfidence,
+        poolAvgBySeat.get(p.owner),
+      ),
       mineConfidence,
       hasMoved,
       inHQ,
@@ -189,14 +225,17 @@ export function estimateRank(
   inBackRow: boolean,
   minRank?: number | null | undefined,
   mineConfidence?: number,
+  /** C1: per-seat unknown-pool average (roster minus known alive/dead). */
+  poolAvgRank?: number,
 ): number {
+  const avg = poolAvgRank ?? AVG_MOBILE_RANK;
   if (knownKind) {
     const rank = PIECE_DEFS[knownKind].rank;
     if (rank !== null) return rank;
     if (knownKind === 'JUNQI') return 0;
     if (knownKind === 'ZHADAN') return 10;
     if (knownKind === 'DILEI') return 8;
-    return AVG_MOBILE_RANK;
+    return avg;
   }
   // Inferred bound takes precedence over the back-row prior (more info).
   if (minRank != null && minRank > 0) {
@@ -207,8 +246,35 @@ export function estimateRank(
   if (mineConfidence != null && mineConfidence > 0.5) return 8;
   if (inHQ && !hasMoved) return 1.5; // flag candidate
   if (inBackRow && !hasMoved) return 7; // mine/defender bias
-  if (hasMoved) return AVG_MOBILE_RANK;
-  return AVG_MOBILE_RANK;
+  return avg;
+}
+
+/** Per-seat average rank of the unknown ranked pool: full roster minus kinds
+ *  visibly alive and kinds known dead. Clamped per kind at roster counts. */
+function computeUnknownPoolAverages(
+  view: PlayerView,
+  deadKnownKinds: Map<SeatId, PieceKind[]>,
+): Map<SeatId, number> {
+  const out = new Map<SeatId, number>();
+  for (const seat of ['N', 'E', 'S', 'W'] as SeatId[]) {
+    const removed = new Map<PieceKind, number>();
+    const remove = (k: PieceKind) => removed.set(k, (removed.get(k) ?? 0) + 1);
+    for (const p of view.pieces) {
+      if (p.owner === seat && p.kind) remove(p.kind);
+    }
+    for (const k of deadKnownKinds.get(seat) ?? []) remove(k);
+
+    let mass = 0;
+    let count = 0;
+    for (const def of Object.values(PIECE_DEFS)) {
+      if (def.rank === null) continue;
+      const left = Math.max(0, def.count - (removed.get(def.kind) ?? 0));
+      mass += def.rank * left;
+      count += left;
+    }
+    out.set(seat, count > 0 ? mass / count : AVG_MOBILE_RANK);
+  }
+  return out;
 }
 
 /** Used by setup priors. */
