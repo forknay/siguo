@@ -1,4 +1,33 @@
-# Bot strategy + implementation plan
+# Bot strategy + implementation plan (lab notebook)
+
+> **New here? Read [`BOT_DEV_GUIDE.md`](BOT_DEV_GUIDE.md) first** — it's the
+> self-contained, step-by-step tutorial + recipe + roadmap. This file is the
+> chronological design log / lab notebook it refers back to.
+
+A fog-respecting heuristic + search bot for Si Guo Jun Qi 2v2. No ML. Built to
+be improved incrementally, measuring each change against the current champion by
+playing matches (see `BOT_DEV_GUIDE.md` §6 for the methodology).
+
+## How to read this file
+
+- **Reading order conventions.** The "[Design decisions log](#design-decisions-log)"
+  and "[Status](#status)" are the live snapshot — read them first. The
+  "[What's done so far](#whats-done-so-far)" phase log is ordered **newest
+  first** (P4 at the top, P0 at the bottom) so the latest work is easy to find.
+- **For the canonical architecture + how-to**, jump to `BOT_DEV_GUIDE.md`; this
+  file only keeps the historical narrative and the raw experiment data.
+
+## Table of contents
+
+1. [Design decisions log](#design-decisions-log) — locked choices, don't re-litigate
+2. [Status](#status) — current champion + measured win rates
+3. [Research notes](#research-notes-mixed-stratego-literature--lu-zhan--si-guo-tactical-sources) — Stratego/Lu Zhan background
+4. [Belief / tracking model — design](#belief--tracking-model--design)
+5. [Move scoring](#move-scoring-replacing-the-7030-attackempty-split)
+6. [Tactics / strategies backlog](#tactics--strategies--implementation-backlog) (A–G)
+7. [Phased rollout proposal](#phased-rollout--proposal)
+8. [**What's done so far**](#whats-done-so-far) — the phase log (newest first: P4 → P0)
+9. [What's next / v3+ work queue](#whats-next--v3-work-queue-v2-complete) — incl. the Monte Carlo design + sampler algorithm
 
 ## Design decisions log
 
@@ -24,13 +53,7 @@ versions. Listed so we don't accidentally re-litigate them.
 - **Strong-piece activation bias is tiny (`STRONG_MOVE_BIAS = 1.3` × rank).** Applied as a tie-break on the MC root-move mean utility + in the rollout fast-policy empty-move weight. Far smaller than material-driven deltas, so it only breaks near-ties toward moving 司令/军长 rather than leaving them parked. Frozen baselines (v0–v2.1) are NOT modified — the bias lives only in the MC line.
 - **Human-strategic refinements override raw self-play win rate.** v3.1's engineer reveal-avoidance, mine probing, and observed-stronger-attack penalty cost a little self-play strength vs v3-mc (which doesn't exploit those mistakes), but make the bot sounder against humans. Self-play eval is a proxy, not the objective — the objective is playing well against people.
 - **#3 (don't attack observed-stronger) is a soft penalty, not a hard prune.** A hard prune removes options the rollout could otherwise value (sacrifice, path-clear); the soft penalty nudges without amputating. Bombs are auto-excluded because a bomb never survives combat to set a `minRank`.
-- **Bot selection is speed-gated.** The server runs the expensive `v3-mc` planner at `normal`/`slow` botSpeed, and falls back to the cheap `v2.1` heuristic at `fast`/`instant` (where v3-mc's ~100–300 ms/move would stall the loop).
-
-
-
-A fog-respecting heuristic player bot for Si Guo Jun Qi 2v2. No ML. Designed
-to be improved incrementally so we can measure each change against the
-current implementation by playing matches.
+- **Bot selection is speed-gated.** The server runs the expensive `LATEST_BOT` planner (currently `v4.2-greedy`) at `normal`/`slow` botSpeed, and falls back to the cheap `v2.1` heuristic at `fast`/`instant` (where the planner's ~300 ms/move would stall the loop).
 
 ## Status
 
@@ -421,36 +444,6 @@ subsequent phases.
 
 ## What's done so far
 
-### P0 (complete) — bot infrastructure
-
-- **Bot moved to `shared/src/bot/`** with versioned registry.
-  - `types.ts`: `Bot`, `BotMoveContext`, `BotSetupContext`, `PickedMove`.
-  - `legal.ts`: `viewMoveContext(view)`, `legalMovesForBot(view, seat)`,
-    `botRng(seed)` — all driven by a `PlayerView`, never `GameState`.
-  - `v0.ts`: frozen baseline (rank-4 prior for unknowns).
-  - `v1.ts`: belief-based; see `belief.ts`.
-  - `index.ts`: `BOTS` registry, `botByName(...)`, `LATEST_BOT` (currently v1).
-- **Server delegates to shared bot.** `server/src/bot.ts` builds a
-  `PlayerView` for the bot's seat and calls `LATEST_BOT.pickMove`.
-  `room.ts` calls `LATEST_BOT.pickSetup` for bot seat setups.
-- **Eval harness**: `pnpm bot-eval --teamA <name> --teamB <name> --games N
-  --mode 2v2 --seed S`. Reports per-team win rates, avg game length, avg
-  pieces remaining, and end-reason breakdown.
-
-### P1 (complete) — belief model + v1 bot
-
-- **`belief.ts`** — `computeBeliefs(view, viewerSeat)` builds a `Map<pieceId,
-  PieceBelief>` by walking `view.moveHistory`. For each combat with a
-  survivor, the survivor's kind is recorded in a cell→kind map; for plain
-  moves, the destination cell is flagged as `hasMoved`. The final
-  `estimateRank()` combines known kind + position + mobility into a single
-  number.
-- **`v1.ts`** — uses `estimatedRank` in `scoreAttack`. Adds two reluctance
-  multipliers: 司令×0.2 and 军长×0.5 against unknowns on the front line.
-- **Game-log encoding now includes resigns.** `applyResign` appends a
-  `ResignEntry` to `moveHistory`; the replay encoding has `R|<seat>` lines
-  alongside `M|<seat>|<from>|<to>` lines.
-
 ### P4 (in progress) — v4 strength campaign (goal: >90% vs v3.1-spatial)
 
 All vs v3.1-spatial, 48 games (24 per orientation) via `bot-eval-par`:
@@ -477,6 +470,7 @@ All vs v3.1-spatial, 48 games (24 per orientation) via `bot-eval-par`:
 | v4-noreply | greedy WITHOUT reply-min (S=64) | 68.8% (reply-min earns ~11 pts; keep) |
 | v4-lite-eval | greedy WITHOUT clock/trade/camp eval terms | 68.8% (the eval extras earn ~11 pts; keep) |
 | v4-flagurgent | ×3 flag offense/defense once a flag is revealed (loss-forensics fix) | 62.5% (over-weights the race at material's expense; soften before retrying) |
+| v4.3-defurgent | ×2 DEFENSE-ONLY reveal urgency (softer retry of flagurgent, targets loss pattern (a)) | ~43.8% net over 48 games (33.3% as A / 54.2% as B — REJECTED, doesn't replicate and net < 50%) |
 | v4-deepreply | reply-min over BOTH opponents (k=2, k2=2) | 74.0% pooled/96 (81.3% then 66.7% — didn't replicate; k 3→2 loses more than k2 gains) |
 | v4-widescreen | 12-sample opening screen when branching > 50 | 66.7% (opening bleed is decision quality, not screen noise) |
 | v4-big | S=88 capture-first (~566ms, 2× budget) | 77.1% (flat MC saturates ~80% REGARDLESS of compute) |
@@ -495,8 +489,11 @@ Loss forensics (6 losses, seed block 12400, `bot-loss-analysis.ts`):
 two recurring patterns — (a) our flag falls 2–10 turns after our marshal's
 death reveals it (defense doesn't escalate on reveal), (b) 4/6 losses were
 already 300–400 material down by turn 50 (opening bleed). Pattern (a)'s
-naive fix (×3 urgency) regressed; the opening-bleed pattern (b) is unsolved
-and is the most promising target for the next campaign.
+naive fix (×3 urgency, `v4-flagurgent`) regressed; the softer defense-only
+retry (×2, `v4.3-defurgent`) also failed (~44% net, didn't replicate) — so
+pattern (a) is now empirically closed for the spatial-weight approach. The
+opening-bleed pattern (b) is unsolved and is the most promising target for
+the next campaign.
 
 Statistical reality check: 48-game evals have ±13-pt CIs; the family of greedy
 variants all sit in the 62–88% band, and single-batch "wins" (like the original
@@ -680,6 +677,36 @@ vs ~196) — the bot stops wasting tempos on shuffles.
 - **Tests**: 11 new (or rewritten) in `belief.test.ts` covering strict-fog
   inference rules, mine-confidence accumulation, and HQ flag-candidate
   position prior. **Total 103 passing**.
+
+### P1 (complete) — belief model + v1 bot
+
+- **`belief.ts`** — `computeBeliefs(view, viewerSeat)` builds a `Map<pieceId,
+  PieceBelief>` by walking `view.moveHistory`. For each combat with a
+  survivor, the survivor's kind is recorded in a cell→kind map; for plain
+  moves, the destination cell is flagged as `hasMoved`. The final
+  `estimateRank()` combines known kind + position + mobility into a single
+  number.
+- **`v1.ts`** — uses `estimatedRank` in `scoreAttack`. Adds two reluctance
+  multipliers: 司令×0.2 and 军长×0.5 against unknowns on the front line.
+- **Game-log encoding now includes resigns.** `applyResign` appends a
+  `ResignEntry` to `moveHistory`; the replay encoding has `R|<seat>` lines
+  alongside `M|<seat>|<from>|<to>` lines.
+
+### P0 (complete) — bot infrastructure
+
+- **Bot moved to `shared/src/bot/`** with versioned registry.
+  - `types.ts`: `Bot`, `BotMoveContext`, `BotSetupContext`, `PickedMove`.
+  - `legal.ts`: `viewMoveContext(view)`, `legalMovesForBot(view, seat)`,
+    `botRng(seed)` — all driven by a `PlayerView`, never `GameState`.
+  - `v0.ts`: frozen baseline (rank-4 prior for unknowns).
+  - `v1.ts`: belief-based; see `belief.ts`.
+  - `index.ts`: `BOTS` registry, `botByName(...)`, `LATEST_BOT`.
+- **Server delegates to shared bot.** `server/src/bot.ts` builds a
+  `PlayerView` for the bot's seat and calls `LATEST_BOT.pickMove`.
+  `room.ts` calls `LATEST_BOT.pickSetup` for bot seat setups.
+- **Eval harness**: `pnpm bot-eval --teamA <name> --teamB <name> --games N
+  --mode 2v2 --seed S`. Reports per-team win rates, avg game length, avg
+  pieces remaining, and end-reason breakdown.
 
 ### Engine support already in place (no work needed)
 
@@ -1016,3 +1043,9 @@ Never prune by static score — that's what loses the clearance moves.
    orientations at S=30, D=6.
 3. If acceptance fails, try widening rollout depth and/or sample count.
    Then escalate to UCB tree (`v3.1-mcts`) if still below threshold.
+
+---
+
+*This is the historical lab notebook. For the canonical architecture,
+how-to-experiment, and roadmap, see [`BOT_DEV_GUIDE.md`](BOT_DEV_GUIDE.md).
+Current champion: `v4.2-greedy` (`LATEST_BOT`).*

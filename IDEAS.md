@@ -1,5 +1,9 @@
 # Ideas — bot & engine improvement brainstorm
 
+> Orientation lives in [`BOT_DEV_GUIDE.md`](BOT_DEV_GUIDE.md) (architecture,
+> how-to-experiment, lessons, roadmap). This file is the raw idea backlog +
+> deep-dive designs + the parked/rejected list it draws from.
+
 Living document. Each idea has a rough **impact / effort / risk** guess and
 enough detail to implement cold. Shipped ideas move to BOT.md's change history.
 
@@ -490,8 +494,13 @@ unit tests can't see. Refresh fixtures deliberately when behavior change is
 
 - **Neural eval / policy nets** — user decision: no ML. All of the above is
   heuristics + search.
-- **Full ISMCTS** — superseded by the cheaper ladder: racing → UCB (B1) →
-  reply-min (B4). Only revisit if all three plateau.
+- **Full ISMCTS** — IMPLEMENTED (`ismcts.ts`, `v5-ismcts`) and REJECTED
+  (2026-06-12, 22.9% vs v3.1). A shared tree aliases nodes across
+  determinizations: combat vs an *unknown* piece leads to incomparable states
+  across sampled worlds, so shared node stats mix worlds exactly like the B1
+  bandit did. Kept for reference. Only revisit with a determinization-aliasing
+  remedy (world-stratified node stats, or shared nodes only at pre-combat
+  positions) — see BOT_DEV_GUIDE §8.2/§9.3.
 - **Mutable engine rewrite (A6/K1) now** — measured midgame cost is already
   ~94 ms; the opening peak (~400 ms) is acceptable for `normal` speed. Perf
   surgery is not the bottleneck; decision quality is. Revisit if B4's ×3
@@ -521,10 +530,16 @@ unit tests can't see. Refresh fixtures deliberately when behavior change is
    self-play strength line.
 7. ~~**C1 roster-aware estimateRank**~~ SHIPPED in v4 (belief.ts pool averages).
 8. ~~**I2 + D6**~~ SHIPPED in v4; ~~**I3**~~ in v4.1 (`downPlayerUrgency`).
-9. **F2 reveal exploitation + H4 cycle detection** — cheap, big vs humans.
-10. **K3 decision snapshot tests** — guard rails before deeper perf surgery
+9. ~~**Reveal-urgency defense (loss-pattern a)**~~ IMPLEMENTED and REJECTED.
+   `evaluate.ts` `revealedFlagUrgency` (×3 symmetric, `v4-flagurgent`, 62.5%)
+   and `revealedDefenseUrgency` (×2 defense-only, `v4.3-defurgent`, ~44% net,
+   2026-06-23) both failed. A static-eval multiplier is the wrong tool for
+   "defend the just-revealed flag"; pattern (a) is closed pending a different
+   mechanism. **Opening bleed (loss-pattern b) is now the prime target.**
+10. **F2 reveal exploitation + H4 cycle detection** — cheap, big vs humans.
+11. **K3 decision snapshot tests** — guard rails before deeper perf surgery
     (the `rollout_fastpath` equivalence test is the first instance).
-11. **G5 difficulty selector** — zero bot work, best UX return for the
+12. **G5 difficulty selector** — zero bot work, best UX return for the
     actual audience.
 
 **2026-06-12 lesson:** the single biggest strength gain (B7, +12.5 pts) came

@@ -126,6 +126,14 @@ const v4Variants: Bot[] = [
     playoutPolicy: { greedyEps: 0.7 },
     spatial: { ...V4_SPATIAL, revealedFlagUrgency: 3 },
   }),
+  // Loss-forensics fix v2: DEFENSE-ONLY reveal urgency (softer ×2), targeting
+  // "our flag falls 2–10 turns after our marshal dies" without the symmetric
+  // ×3 variant's offense-at-material's-expense regression.
+  makeV4Bot('v4.3-defurgent', {
+    samples: 44,
+    playoutPolicy: { greedyEps: 0.7 },
+    spatial: { ...V4_SPATIAL, revealedDefenseUrgency: 2 },
+  }),
   // E3 setup-time MC: pick the best of 10 candidate layouts by simulation.
   makeV4Bot(
     'v4-greedy-setup',

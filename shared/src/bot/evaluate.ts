@@ -56,8 +56,19 @@ export interface SpatialWeights {
    * analyzed losses our flags fell 2–10 turns after the reveal — the opponent
    * rails straight in while the defense term stays at peacetime weight.
    * Symmetrically multiplies `flagAdvance` toward revealed ENEMY flags.
+   * NOTE: the ×3 symmetric variant (`v4-flagurgent`) regressed (62.5%) —
+   * boosting offense at material's expense lost more than the defense gained.
+   * Prefer `revealedDefenseUrgency` (defense-only, softer) instead.
    */
   revealedFlagUrgency?: number;
+  /**
+   * Loss-forensics fix v2 (2026-06-13): DEFENSE-ONLY reveal urgency. Multiplies
+   * `flagSafety` for a revealed OWN flag but leaves offense at peacetime weight,
+   * targeting loss pattern (a) — our flag falling shortly after our marshal's
+   * death — without over-weighting the race the way the symmetric ×3 did.
+   * Applied independently of (and in addition to) `revealedFlagUrgency`.
+   */
+  revealedDefenseUrgency?: number;
 }
 
 /** Score the rollout end state from `mySeat`'s perspective. */
@@ -150,10 +161,12 @@ export function evaluateRollout(
     }
     // Defense: nearest enemy mobile piece to our flag. Closer = worse. A
     // revealed OWN flag is under the gun — defense escalates past peacetime.
+    // `revealedDefenseUrgency` (defense-only) stacks on `revealedFlagUrgency`.
+    const defenseUrgency = urgency * (spatial.revealedDefenseUrgency ?? 1);
     for (const flag of myFlags) {
       const d = dist(flag, oppMobile);
       if (d !== null) {
-        utility -= spatial.flagSafety * (state.flagRevealed[flag.owner] ? urgency : 1) * (1 / (1 + d));
+        utility -= spatial.flagSafety * (state.flagRevealed[flag.owner] ? defenseUrgency : 1) * (1 / (1 + d));
       }
     }
 

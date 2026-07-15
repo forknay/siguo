@@ -9,7 +9,7 @@ Local-network playable digital version of **Si Guo Jun Qi** (Si Guo Da Zhan / �
 - **4-player game**, fully playable: 2v2 teams **and** free-for-all.
 - **Canonical rule set**: HQ immobility, engineers-only railroad corners through the corner cells (with curved bypass at the four 九宫 corners), mines stay after non-engineer trigger, bombs cause mutual destruction, Marshal-death triggers flag-reveal, 70-move stalemate, all 5 camps 8-directional, central cell `C-2-2` is transit-only.
 - **Strict fog of war**. Server-authoritative state. Opponents' ranks never appear in your wire payload; combat reveals only the outcome.
-- **Heuristic bot opponent** (v2.1) — anti-shuffle filter + EV-based combat scoring (engine valued at 100 = 旅长), bomb-hunts-strong-pieces offense, mine-confidence cell filtering, smart placement. See [BOT.md](BOT.md) for the design + measured win rates.
+- **Belief-sampled Monte Carlo bot** (`v4.2-greedy`, the current `LATEST_BOT`) — imagines ~44 plausible hidden boards per turn, searches each with reply-minimization + low-noise greedy playouts, and plays the best average move. ~80% vs the prior champion. To understand or improve it, read [`BOT_DEV_GUIDE.md`](BOT_DEV_GUIDE.md) (step-by-step tutorial + roadmap); the lab notebook is [BOT.md](BOT.md) and the idea backlog is [IDEAS.md](IDEAS.md).
 - **Layout designer** — craft a 25-piece opening, copy as a text encoding, paste into real-game setup. Persists recents in `localStorage`.
 - **Replay system** — every game produces a shareable text encoding; paste into the **Watch replay** tab on the landing screen to step through with Prev/Next, autoplay, and per-seat viewing perspective.
 - **LAN-friendly hosting** — server prints detected LAN URLs; lobby shows a 4-char room code.
@@ -208,6 +208,7 @@ client/   React + Vite + SVG
 
 ## Related docs
 
-- [BOT.md](BOT.md) — bot design + strategy research + version-by-version diff + eval results
+- [BOT_DEV_GUIDE.md](BOT_DEV_GUIDE.md) — **start here to understand or improve the bot**: step-by-step architecture, concepts, version lineage, experiment methodology, lessons, and roadmap
+- [BOT.md](BOT.md) — bot design + strategy research + version-by-version diff + eval results (the chronological lab notebook)
 - [IDEAS.md](IDEAS.md) — improvement brainstorm (search perf/quality, beliefs, eval, setup, tooling)
 - [TODO.md](TODO.md) — feature backlog + test inventory + completed-task history

@@ -1,6 +1,9 @@
 # TODO
 
-## In progress — #54 v4 strength campaign (goal: >90% vs v3.1-spatial)
+> Bot onboarding + roadmap: [`BOT_DEV_GUIDE.md`](BOT_DEV_GUIDE.md). Lab
+> notebook: [`BOT.md`](BOT.md). Idea backlog: [`IDEAS.md`](IDEAS.md).
+
+## Concluded — #54 v4 strength campaign (goal was >90% vs v3.1-spatial; reached ~80%)
 
 - [x] **Depth-scaling experiment** — answer: NO linear gains, deeper is WORSE
   (d3 > d9 > d12; see BOT.md). Compute now buys samples + near-root precision.
@@ -27,6 +30,24 @@
   was NOT reached; flat-MC knob space is exhausted (next step would be a true
   tree search / ISMCTS, or data-driven fixes from loss forensics:
   `scripts/bot-loss-analysis.ts`).
+- [x] **Full ISMCTS (`v5-ismcts`)** — implemented (`ismcts.ts`) and REJECTED
+  (22.9% vs v3.1): shared-tree node aliasing across determinizations, same
+  failure mode as the B1 root bandit. See BOT_DEV_GUIDE §8.2.
+- [x] **Loss forensics** — `scripts/bot-loss-analysis.ts` found two loss
+  patterns: (a) flag falls 2–10 turns after the marshal dies and reveals it;
+  (b) 4/6 losses already 300–400 material down by turn 50 (opening bleed).
+- [x] **Reveal-urgency defense (loss-pattern a)** — REJECTED both ways:
+  `v4-flagurgent` (×3 symmetric, 62.5%) and `v4.3-defurgent` (×2 defense-only,
+  ~44% net, 2026-06-23). A static-eval multiplier is the wrong tool; pattern
+  (a) is closed pending a different mechanism.
+
+### Next target (post-campaign)
+
+- [ ] **Opening bleed (loss-pattern b)** — the prime unsolved target. Classify
+  the opening mistakes on a larger loss corpus (`bot-loss-analysis.ts`) and fix
+  the dominant class via setup (`smartValidSetup` / E1 layout curation) or
+  early-game eval. Accept: ≥96 pooled games, net ≥55% vs v4.2, replicated.
+  See BOT_DEV_GUIDE §9.1.
 
 ## Pending
 
@@ -51,8 +72,10 @@
 
 - [ ] **Sampler backtracking** — replace retry-on-infeasible with proper backtracking. Only if eval shows greedy failure rate matters.
 - [ ] **Per-seat strict-fog projection inside rollouts** — currently the rollout policy assumes opponents play with full knowledge of the sampled world. Switching to per-ply projection is more correct but costlier. Only if eval shows the bias hurts.
-- [ ] **UCB tree expansion (`v3.1-mcts`)** — natural escalation if flat MC plateaus.
-- [ ] **ISMCTS** — only if flat MC + UCB both plateau.
+- [x] **UCB tree expansion / B1 root bandit** — implemented and REJECTED
+  (18.8% vs v3.1; breaks paired-world comparisons). See IDEAS.md B1.
+- [x] **ISMCTS** — implemented (`ismcts.ts`, `v5-ismcts`) and REJECTED (22.9%;
+  determinization node aliasing). Revisit only with an aliasing remedy.
 - [ ] **Bomb placement bias (small)** — slight column-preference for one of the two bombs at setup. Currently uniform within rows 3–4. Low priority; move-time heuristics dominate current win-rate gap.
 
 ## Done
@@ -71,7 +94,7 @@ All previously tracked TODO items completed. Promotions to v2 / v2.1 / strict-fo
 - [x] Dead pieces no longer hinder movement (legal-move generation) (#46)
 - [x] Update README to reflect current state (#47)
 
-## Test inventory (126 passing)
+## Test inventory (144 passing, 16 files)
 
 All tests live under `shared/tests/` and run with `pnpm test`.
 
@@ -89,10 +112,14 @@ All tests live under `shared/tests/` and run with `pnpm test`.
 | `sampler.test.ts` | 8 | v3-mc belief sampler: determinism, roster bounds (≤count, sum 25), setup-rule + rank-bound respect, own-kind preservation, infeasible path |
 | `flaghypothesis.test.ts` | 3 | v3.1 flag-candidate ranking: both HQs initial, empty HQ ruled out, `likelyFlagCell` |
 | `bot_v3_1.test.ts` | 5 | reduced 1.3 strong-move bias, rank-less zero bias, v3.1 valid setup + move smoke |
+| `bot_v4.test.ts` | 6 | `fastTopKMoves` reply-min probe (≤k, deterministic), V4_SPATIAL clock term (leading-stale worse, flips for trailing side), v4 valid setup + legal move, greedy/safe + UCB playout determinism |
+| `distances.test.ts` | 7 | D7 `moveDistance`: adjacent road = 1, straight rail slide = 1, central curve = 1, ring corner = 2 (non-engineer), HQ exit-impossible/enterable, tighter-than-Manhattan across zones, symmetric |
+| `infovalue.test.ts` | 4 | H1 info-value: unknown-piece pricing, flag-relevance weighting, once-per-piece rollout credit |
+| `rollout_fastpath.test.ts` | 1 | `applyMoveForRollout` ≡ `applyMove` equivalence (the perf-refactor guard rail) |
 
 ## Project task ledger
 
-All tracked tasks #15–#51 completed. Remaining backlog is the gated "v3.1 / later" escalations (UCB tree, ISMCTS, sampler backtracking, per-seat rollout fog) — all explicitly conditional on the current approach plateauing, which it hasn't — plus bomb-baiting (user-deferred as advanced).
+All tracked tasks #15–#51 completed, plus the #54 v4 strength campaign (concluded: `v4.2-greedy` ships at ~80% vs v3.1). The flat-MC approach has now plateaued: the UCB tree (B1) and ISMCTS escalations were implemented and REJECTED (determinization aliasing), and bomb-baiting shipped as v4.1's info-value model (off the self-play strength line). The live backlog is loss-forensics-driven decision-quality work — primarily the opening-bleed pattern (see the "Next target" section above and BOT_DEV_GUIDE §9).
 
 | # | Status | Title |
 |---|---|---|
