@@ -48,6 +48,26 @@
   the dominant class via setup (`smartValidSetup` / E1 layout curation) or
   early-game eval. Accept: ≥96 pooled games, net ≥55% vs v4.2, replicated.
   See BOT_DEV_GUIDE §9.1.
+- [ ] **Imperative flag defense (IDEAS.md D8)** — user note 2026-07-14: when an
+  enemy gets within ~2 moves of our flag, or has a clear defender-free path to
+  it, commit to capturing/blocking it no matter the material cost. Implement as
+  a **threat-gated** near-terminal `flagSafety` escalation + a capture/block
+  `rootBias` (NOT an always-on multiplier — that's why the earlier reveal-urgency
+  variants failed). Targets loss-pattern (a). See BOT_DEV_GUIDE §9.1.
+- [ ] **Imperative flag assault (IDEAS.md D10)** — user note 2026-07-14: if an
+  opponent flag is open, charge it, or at least stage moves toward it. Two parts:
+  (1) opportunity-gated near-terminal preference for capturing a revealed /
+  undefended flag; (2) **the staging problem is structural** — at `depth: 4` a
+  6-ply march has no payoff inside the search horizon, so the bot never starts
+  one. Fix via a convex distance curve, a persistent assault commitment
+  (designated attacker + target flag cached across turns), and/or a *targeted*
+  rollout advance bias (untargeted already failed at 64.6%). Reuse the target
+  assignment from `partnerCoordinationBiasGraph`. See BOT_DEV_GUIDE §9.1.
+- [ ] **Stronger strong-piece bias (IDEAS.md D9)** — user note 2026-07-14: play
+  stronger pieces more. Raise `STRONG_MOVE_BIAS` (1.3→1.5–2.0) and/or add a
+  `PlayoutPolicy.strongBias`. Must be measured (may cost self-play strength by
+  exposing heavies early; ship behind the aggressive/difficulty flag if it
+  regresses). See BOT_DEV_GUIDE §9.1.
 
 ## Pending
 

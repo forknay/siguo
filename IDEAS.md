@@ -190,6 +190,116 @@ cell over road+rail edges, ignoring occupancy = admissible lower bound;
 "moves to get there". Also fixes the engineer-vs-mine dispatch distances.
 Effort: low-medium. Impact: medium — all spatial terms get more honest.
 
+### D8. Imperative flag defense (hard override, not a soft weight) — HIGH PRIORITY
+User note (2026-07-14): *"when opposing pieces get close to your flag, you
+should no matter what try to defeat them (or if you see a clear path to your
+defeat)."* Today own-flag safety is only a soft `flagSafety` term in
+`evaluateRollout` that the material delta can outweigh — so the bot will
+sometimes take a good-looking trade elsewhere while an attacker walks the last
+two cells into our flag. This is likely a contributor to loss-pattern (a)
+(flag falls shortly after the marshal reveals it) AND loss-pattern (b).
+
+Design — treat imminent flag loss as near-terminal, not as a tunable:
+  - **Threat detection** (in belief/eval space, fog-respecting): an enemy piece
+    is a *flag threat* if it is within `T` moves (`moveDistance`, D7) of our
+    likely flag cell (`likelyFlagCell(view, mySeat)` / `flagHypothesisFor`) AND
+    no known-stronger defender of ours sits on the only approach path. Start
+    `T = 2`; a "clear path to defeat" = an unobstructed rail/road run to the
+    flag with no defender that beats the attacker's *estimated* rank.
+  - **Response**, in order of preference: (1) a `rootBias`/hard-preference for
+    any move that captures the threat with a piece that beats its estimated
+    rank; (2) failing that, a body-block move onto the single approach cell;
+    (3) escalate `flagSafety` to a **near-terminal magnitude** (comparable to
+    `MARSHAL_ALIVE_BONUS`, i.e. hundreds, so it dominates ordinary material
+    trades) only while a live threat exists — a *conditional* multiplier, which
+    is why the earlier blanket `revealedFlagUrgency`/`revealedDefenseUrgency`
+    multipliers failed (they were always-on, not threat-gated).
+  - **Why an override, not a weight**: losing the flag is losing the game, so
+    the correct utility really is discontinuous. The reason the ×2/×3 urgency
+    experiments regressed is they raised the weight *everywhere*, distorting
+    offense; gating on an actual detected threat avoids that.
+Where: `evaluate.ts` (threat-conditional `flagSafety`), a new `rootBias` term
+in `v4.ts` (capture/block the threat), reusing `likelyFlagCell` + `moveDistance`.
+Cross-refs: subsumes/strengthens I1 (partner-emergency defense) for our own
+flag; directly targets loss-pattern (a). Impact: HIGH. Effort: medium.
+Risk: false-positive threats making the bot turtle — tune `T` and require the
+path actually be defender-free. **Measure vs v4.2, both orientations, ≥96 games.**
+
+### D9. Stronger strong-piece move bias
+User note (2026-07-14): *"add some bias so that stronger pieces are played
+more."* Today `strongMoveBonus(kind) = rank × STRONG_MOVE_BIAS` with
+`STRONG_MOVE_BIAS = 1.3` (`values.ts`) — it was actually *lowered* 1.5→1.3 in
+v3.1 (#51) to stop the bot over-committing heavies. The user now wants the
+opposite lean. Two independent knobs to sweep:
+  - **Root-move bias** (which piece to move this turn): raise `STRONG_MOVE_BIAS`
+    back toward 1.5–2.0. Applies in `runMonteCarlo`'s per-move `biases`.
+  - **Playout policy** (which piece the fast rollout policy moves): the quiet-move
+    weight is `1 + strongMoveBonus`; a `PlayoutPolicy.strongBias` multiplier
+    would make rollouts also favor advancing heavies, which propagates through
+    the eval rather than only breaking root ties.
+Caution: this trades against information hygiene — moving 司令/军长 early reveals
+and exposes them (exactly why it was lowered before). So it may *cost* self-play
+strength even if it matches the desired play style; treat like H1/info-value —
+sweep it, and if it regresses in eval, ship it behind the difficulty/"aggressive"
+flag rather than as the strength champion. Effort: trivial (one constant + one
+optional policy field). Impact: uncertain — **must measure**, don't just set it.
+
+### D10. Imperative flag assault — charge an open flag, or stage toward it — HIGH PRIORITY
+User note (2026-07-14): *"if opponent flag is open, you should charge it or at
+least prepare moves to move towards it."* The offensive mirror of D8. Two
+distinct failures to fix, and the second is the harder one:
+
+  1. **Charge (the flag is reachable now).** When an enemy flag is *open* —
+     revealed (`view.flagRevealed[seat]`, which flips when their marshal dies)
+     or its `likelyFlagCell` has a defender-free approach — any move that
+     captures it wins that opponent outright. This should be a near-terminal
+     preference, not something the material eval can trade away. Symmetric with
+     D8: gate on a detected *opportunity* rather than raising flag-advance
+     weight globally (the always-on `revealedFlagUrgency` multiplier already
+     failed, see BOT.md §P4).
+
+  2. **Stage / prepare (the flag is 5+ moves away) — the horizon problem.**
+     This is the real gap and it is **structural, not a weight**. v4.2 searches
+     `depth: 4`. A march that needs 6 plies to reach the flag produces *zero*
+     material or terminal payoff inside the horizon, so every step of it scores
+     as a neutral quiet move and the bot never commits to starting one. The
+     `flagAdvance` spatial term (`350 × 1/(1+d)`) is the only thing rewarding
+     progress, and at `d = 6` it's worth ~50 — routinely outbid by any small
+     trade elsewhere. **The bot is structurally incapable of planning a
+     multi-turn assault**; it only lunges when the flag is already close.
+
+     Candidate remedies, cheapest first:
+     - **Convex distance reward.** Replace `1/(1+d)` with a curve that pays more
+       for each step of progress at long range (e.g. `(maxD − d)²` normalized),
+       so closing 6→5 is worth about as much as 2→1. Cheapest fix; test first.
+     - **Persistent assault commitment (root bias with memory).** Choose a
+       target flag + designated attacker, persist that choice across turns
+       (keyed by `moveCount` in a small per-seat cache, like B5's search reuse),
+       and root-bias moves that advance the designated attacker along the
+       precomputed `moveDistance` path. Gives multi-turn coherence the depth-4
+       search cannot represent. Needs care: must abandon the plan when the
+       attacker dies or a better target appears, or the bot tunnel-visions.
+     - **Goal-conditioned rollout policy.** `PlayoutPolicy.advanceBias` already
+       exists but measured *worse* (`v4-greedy-adv`, 64.6%) — because it pushed
+       *everything* forward indiscriminately. A targeted version (bias only the
+       designated attacker toward the designated flag) is the version worth
+       retrying.
+     - **Deeper search only for assault lines** — selective extension when a
+       rollout is already advancing on a flag. Most expensive; try last.
+
+Where: `evaluate.ts` (opportunity-gated flag offense + the distance curve),
+`v4.ts` (assault `rootBias`, target selection reusing `likelyFlagCell` /
+`flagHypothesisFor` / `moveDistance`), optionally `rollout.ts` (targeted
+advance bias). Interacts with the existing `partnerCoordinationBiasGraph`,
+which already assigns each partner a different opposing flag — reuse that
+target assignment rather than inventing a second one.
+Impact: HIGH (converts won positions the bot currently lets drift to the
+70-move draw; note D5 clock awareness makes drawn-but-winning positions
+*visible* to the eval but gives the bot no *plan* to convert them).
+Effort: medium. Risk: over-committing a lone attacker into a mine/bomb wall —
+pair with the flag-lane blockage check (D4) so we don't march into a
+mined lane with no engineer. **Measure vs v4.2, both orientations, ≥96 games.**
+
 ## B-extra. Rollout policy robustness
 
 ### B6. Policy mixing in rollouts
@@ -536,6 +646,14 @@ unit tests can't see. Refresh fixtures deliberately when behavior change is
    2026-06-23) both failed. A static-eval multiplier is the wrong tool for
    "defend the just-revealed flag"; pattern (a) is closed pending a different
    mechanism. **Opening bleed (loss-pattern b) is now the prime target.**
+**Top of the live queue (user-requested 2026-07-14, ahead of everything below):**
+**D8 imperative flag defense**, **D10 imperative flag assault + multi-turn
+staging**, **D9 stronger strong-piece bias**. D8/D10 are a matched pair — make
+flag loss/capture behave as the near-terminal events they are, **gated on a
+detected threat/opportunity** (always-on urgency multipliers already failed,
+item 9). D10 also exposes the one structural limit found so far: at `depth: 4`
+the bot cannot plan a multi-turn flag march at all.
+
 10. **F2 reveal exploitation + H4 cycle detection** — cheap, big vs humans.
 11. **K3 decision snapshot tests** — guard rails before deeper perf surgery
     (the `rollout_fastpath` equivalence test is the first instance).

@@ -1,6 +1,7 @@
 import { useGame, leaveRoom } from '../state.js';
 import type { BotSpeed, SeatId } from '@siguo/shared';
 import { ChatPanel } from '../components/ChatPanel.js';
+import { copyToClipboard } from '../clipboard.js';
 
 const SEATS: SeatId[] = ['N', 'E', 'S', 'W'];
 const SEAT_COLORS: Record<SeatId, string> = { N: 'var(--p-n)', E: 'var(--p-e)', S: 'var(--p-s)', W: 'var(--p-w)' };
@@ -31,12 +32,30 @@ export function Lobby() {
 
         {isHost && lobby.lanUrls.length > 0 && (
           <div className="col">
-            <div className="muted">Share with players on the same Wi-Fi:</div>
-            {lobby.lanUrls.map((u) => (
-              <code key={u} style={{ background: 'var(--bg)', padding: '0.4rem 0.6rem', borderRadius: 4 }}>
-                {u}/?room={lobby.roomCode}
-              </code>
-            ))}
+            <div className="muted">Invite links — the first one is the most likely to work:</div>
+            {lobby.lanUrls.map((u) => {
+              const link = `${u}/?room=${lobby.roomCode}`;
+              const isLan = u.startsWith('http://');
+              return (
+                <div key={u} className="row" style={{ gap: '0.5rem' }}>
+                  <code
+                    style={{
+                      background: 'var(--bg)',
+                      padding: '0.4rem 0.6rem',
+                      borderRadius: 4,
+                      flex: 1,
+                      overflowWrap: 'anywhere',
+                    }}
+                  >
+                    {link}
+                  </code>
+                  <span className="muted" style={{ fontSize: 11, whiteSpace: 'nowrap' }}>
+                    {isLan ? 'same Wi-Fi' : 'internet'}
+                  </span>
+                  <button onClick={() => void copyToClipboard(link)}>Copy</button>
+                </div>
+              );
+            })}
           </div>
         )}
 

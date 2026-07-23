@@ -518,10 +518,61 @@ Cross-references are to IDEAS.md sections.
      target the dominant class.
    - *Accept*: ≥96 pooled games, net ≥ 55% vs v4.2, replicated.
 
-2. **E1 setup curation.** `makeV4BotWithLayout` + the 24 `layoutCandidates` in
+2. **Imperative flag defense (IDEAS.md D8).** User-requested (2026-07-14): when
+   an enemy piece gets within a couple of moves of our flag — or has a clear
+   defender-free path to it — the bot must commit to capturing or body-blocking
+   it, *no matter the material cost elsewhere*.
+   - *Where*: a **threat-gated** `flagSafety` escalation in `evaluate.ts` (near-
+     terminal magnitude, ~hundreds, only while a live threat exists) + a new
+     `rootBias` in `v4.ts` that prefers capturing/blocking the threat. Reuse
+     `likelyFlagCell(view, mySeat)` + `moveDistance` (D7) for detection.
+   - *Why*: losing the flag = losing the game, so its utility is genuinely
+     discontinuous. Today it's a soft weight the material delta can outweigh —
+     the bot trades elsewhere while an attacker walks in. Directly targets
+     loss-pattern (a).
+   - *Critical distinction*: the earlier `revealedFlagUrgency`/
+     `revealedDefenseUrgency` multipliers regressed **because they were
+     always-on** and distorted offense. D8 must be **conditional on a detected
+     threat** — that's the whole point.
+   - *Accept*: ≥96 pooled games, net ≥ 55% vs v4.2, both orientations, replicated.
+
+3. **Imperative flag assault (IDEAS.md D10).** User-requested (2026-07-14): if an
+   opponent's flag is open, charge it — or at minimum stage moves toward it. The
+   offensive mirror of D8, with two parts:
+   - *Charge*: when a flag is revealed (`view.flagRevealed`) or its
+     `likelyFlagCell` has a defender-free approach, treat capturing it as
+     near-terminal preference — again **opportunity-gated**, not a global
+     flag-advance weight increase.
+   - *Stage* — **this is a structural gap, not a weight.** v4.2 searches
+     `depth: 4`, so a 6-ply march to the flag has *no* payoff inside the horizon
+     and every step scores as a neutral quiet move. `flagAdvance` at
+     `350 × 1/(1+d)` is worth only ~50 at d=6 — outbid by any small trade. **The
+     bot cannot currently plan a multi-turn assault**; it only lunges when the
+     flag is already near. Fixes, cheapest first: a convex distance curve (pay
+     for long-range progress); a **persistent assault commitment** (designated
+     attacker + target flag cached across turns, root-biased along the
+     `moveDistance` path); a *targeted* rollout advance bias (the untargeted
+     `advanceBias` already failed at 64.6% — retry only the targeted form);
+     selective depth extension for assault lines.
+   - *Reuse*: `partnerCoordinationBiasGraph` already assigns each partner a
+     different opposing flag — take the target from there, don't invent a second
+     assignment. Pair with D4 (flag-lane blockage) so we don't march a lone piece
+     into a mined lane with no engineer.
+   - *Accept*: ≥96 pooled games, net ≥ 55% vs v4.2, both orientations, replicated.
+
+4. **E1 setup curation.** `makeV4BotWithLayout` + the 24 `layoutCandidates` in
    `index.ts` already ladder fixed openings against the SOTA. Run that ladder; if
    a layout seed beats v4.2's random-opening meta, bake it into a curated opening
    book.
+
+5. **Stronger strong-piece bias (IDEAS.md D9).** User-requested (2026-07-14):
+   play stronger pieces more. Knobs: raise `STRONG_MOVE_BIAS` (1.3 → 1.5–2.0 in
+   `values.ts`; note it was *lowered* 1.5→1.3 in v3.1 to curb over-commitment)
+   and/or add a `PlayoutPolicy.strongBias` so rollouts also favor advancing
+   heavies. **Caveat**: moving 司令/军长 early reveals and exposes them, so this
+   may cost self-play strength even while matching the desired style — sweep it,
+   and if it regresses, ship behind the difficulty/"aggressive" flag (Tier 2),
+   not as the champion. Trivial to implement, **must be measured** before shipping.
 
 ### 9.2 Tier 2 — vs-human value (off the self-play strength line)
 
@@ -593,7 +644,11 @@ engine rewrite (perf isn't the bottleneck; decision quality is). See IDEAS.md
 
 ---
 
-*Last updated: 2026-06-23. Champion: `v4.2-greedy` (`LATEST_BOT`), 80.2% vs
-v3.1-spatial over 96 games. Loss-pattern (a) (reveal-urgency) closed as a
-dead end after `v4.3-defurgent` failed; next target: opening-bleed loss
-pattern (§9.1).*
+*Last updated: 2026-07-14. Champion: `v4.2-greedy` (`LATEST_BOT`), 80.2% vs
+v3.1-spatial over 96 games. Always-on reveal-urgency closed as a dead end
+(`v4.3-defurgent` failed). Next targets (§9.1): opening-bleed loss pattern,
+threat-gated imperative flag defense (D8), opportunity-gated flag assault +
+multi-turn staging (D10), and stronger strong-piece bias (D9) — the last
+three are user-requested (2026-07-14). D8/D10 are a matched pair: make
+flag loss and flag capture behave as the near-terminal events they are,
+gated on a detected threat/opportunity rather than always-on weights.*

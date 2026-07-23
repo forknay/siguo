@@ -1,6 +1,6 @@
 # siguo — 四国军棋
 
-Local-network playable digital version of **Si Guo Jun Qi** (Si Guo Da Zhan / 四国大战), the 4-player Chinese variant of Lu Zhan Jun Qi (Stratego cousin). Host on one machine; everyone else joins via a browser on the same Wi-Fi. Bots fill empty seats so 1–4 humans can play.
+Playable digital version of **Si Guo Jun Qi** (Si Guo Da Zhan / 四国大战), the 4-player Chinese variant of Lu Zhan Jun Qi (Stratego cousin). Host on one machine; everyone else joins via a browser — on the same Wi-Fi, or [over the internet](#playing-over-the-internet) through a one-command tunnel. Bots fill empty seats so 1–4 humans can play.
 
 > si guo jun qi for my dad
 
@@ -12,7 +12,7 @@ Local-network playable digital version of **Si Guo Jun Qi** (Si Guo Da Zhan / �
 - **Belief-sampled Monte Carlo bot** (`v4.2-greedy`, the current `LATEST_BOT`) — imagines ~44 plausible hidden boards per turn, searches each with reply-minimization + low-noise greedy playouts, and plays the best average move. ~80% vs the prior champion. To understand or improve it, read [`BOT_DEV_GUIDE.md`](BOT_DEV_GUIDE.md) (step-by-step tutorial + roadmap); the lab notebook is [BOT.md](BOT.md) and the idea backlog is [IDEAS.md](IDEAS.md).
 - **Layout designer** — craft a 25-piece opening, copy as a text encoding, paste into real-game setup. Persists recents in `localStorage`.
 - **Replay system** — every game produces a shareable text encoding; paste into the **Watch replay** tab on the landing screen to step through with Prev/Next, autoplay, and per-seat viewing perspective.
-- **LAN-friendly hosting** — server prints detected LAN URLs; lobby shows a 4-char room code.
+- **LAN + internet hosting** — `pnpm online` opens a Cloudflare quick tunnel so friends can join from anywhere; the lobby hands you a one-click invite link either way.
 
 ## Tech stack
 
@@ -57,10 +57,63 @@ On boot the server prints all detected LAN URLs, e.g.:
 
 ```
 siguo server listening on http://0.0.0.0:3000
-  LAN: http://192.168.1.42:3000
+  LAN:    http://192.168.1.42:3000
+  (LAN only — set PUBLIC_URL to advertise a tunnel URL in the lobby)
 ```
 
 Anyone on the same Wi-Fi can open the URL and join the room with the 4-character code shown in the lobby.
+
+### Playing over the internet
+
+Nothing about the netcode is LAN-specific — the client opens its socket against
+whatever origin served the page, so the whole game works unchanged behind a
+tunnel. The one-time setup is installing [`cloudflared`](https://github.com/cloudflare/cloudflared):
+
+```sh
+brew install cloudflared
+```
+
+No Cloudflare account, login, or config file is needed — quick tunnels are
+anonymous. Then:
+
+```sh
+pnpm online
+```
+
+That builds the client, opens an ephemeral tunnel, and boots the server with
+`PUBLIC_URL` pointed at the public address:
+
+```
+  ┌─────────────────────────────────────────────────────────────
+  │  Public URL:  https://muscle-lambda-rr-drops.trycloudflare.com
+  │
+  │  Create a room, then share the invite link the lobby shows.
+  │  This tunnel dies when you Ctrl-C — the URL is single-use.
+  └─────────────────────────────────────────────────────────────
+```
+
+Open that URL yourself, create a room, and the lobby lists an invite link per
+reachable address — the public one first, tagged `internet`, with a **Copy**
+button. Send it to your friends; the link carries `?room=<code>`, so they land
+straight on the Join tab with the code already filled in and only need to pick a
+name. Ctrl-C tears the tunnel down.
+
+Notes and caveats:
+
+- **The URL is random and single-use.** Every `pnpm online` run gets a different
+  address, so send the fresh link each session. A stable domain needs a named
+  tunnel and a real Cloudflare account.
+- **Anyone with the URL can reach your server** while it's up, and room codes are
+  only 4 characters. Fine for a game with friends; don't leave it running
+  unattended.
+- **Tunnel `:3000`, not `:5173`.** Port 3000 is plain Express with no host
+  checking. Vite ≥5.4.12 rejects unrecognised `Host` headers; `allowedHosts` in
+  [`client/vite.config.ts`](client/vite.config.ts) already whitelists
+  `.trycloudflare.com` if you do want hot-reload over a tunnel, but then you must
+  tunnel the Vite port and run `pnpm dev` separately.
+- **`PUBLIC_URL` works with any host**, not just Cloudflare — set it to whatever
+  public origin fronts the server (ngrok, a VPS, a real deployment) and the lobby
+  advertises that instead.
 
 ## Game features
 

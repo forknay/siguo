@@ -27,6 +27,16 @@ const DEBUG_MODE: boolean = (() => {
   }
 })();
 
+/** Room code from an invite link (?room=ABCD), or '' if there isn't one. */
+export const INVITE_ROOM: string = (() => {
+  try {
+    const raw = new URLSearchParams(window.location.search).get('room') ?? '';
+    return raw.toUpperCase().slice(0, 4);
+  } catch {
+    return '';
+  }
+})();
+
 interface GameStore {
   socket: Socket | null;
   phase: Phase;
@@ -192,16 +202,22 @@ export const useGame = create<GameStore>((set, get) => ({
 
     socket.on('connect', () => {
       const { roomCode, playerToken } = loadPersisted();
-      if (roomCode && playerToken) {
-        // Best-effort reconnect.
-        get().send({
-          type: 'JoinRoom',
-          roomCode,
-          playerName: 'reconnecting',
-          playerToken,
-          debug: DEBUG_MODE,
-        });
+      if (!roomCode || !playerToken) return;
+      // An invite link (?room=ABCD) for a *different* room beats a stale saved
+      // session — otherwise clicking a friend's link silently drops you back
+      // into whatever room you last played in.
+      if (INVITE_ROOM && INVITE_ROOM !== roomCode) {
+        clearPersisted();
+        return;
       }
+      // Best-effort reconnect.
+      get().send({
+        type: 'JoinRoom',
+        roomCode,
+        playerName: 'reconnecting',
+        playerToken,
+        debug: DEBUG_MODE,
+      });
     });
 
     socket.on('disconnect', () => {

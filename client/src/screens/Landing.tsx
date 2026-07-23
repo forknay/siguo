@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useGame } from '../state.js';
+import { INVITE_ROOM, useGame } from '../state.js';
 import type { GameMode } from '@siguo/shared';
 
 export function Landing() {
@@ -7,17 +7,18 @@ export function Landing() {
   const lastError = useGame((s) => s.lastError);
   const clearError = useGame((s) => s.clearError);
   const debug = useGame((s) => s.debug);
-  const [tab, setTab] = useState<'create' | 'join' | 'replay'>('create');
+  const invite = INVITE_ROOM;
+  const [tab, setTab] = useState<'create' | 'join' | 'replay'>(invite ? 'join' : 'create');
   const [name, setName] = useState('Player');
   const [mode, setMode] = useState<GameMode>('2v2');
-  const [code, setCode] = useState('');
+  const [code, setCode] = useState(invite);
   const [replayCode, setReplayCode] = useState('');
 
   return (
     <div className="screen-center">
       <div className="card" style={{ minWidth: 360 }}>
         <h1>四国军棋</h1>
-        <div className="muted">Si Guo Jun Qi — LAN multiplayer</div>
+        <div className="muted">Si Guo Jun Qi — online &amp; LAN multiplayer</div>
         {debug && (
           <div style={{ color: 'var(--accent)', fontSize: 12 }}>
             🔍 Debug mode (opponent pieces will be revealed)
@@ -71,6 +72,11 @@ export function Landing() {
           </>
         ) : (
           <>
+            {invite && (
+              <div className="muted">
+                You were invited to room <strong>{invite}</strong> — pick a name and join.
+              </div>
+            )}
             <label className="col">
               <span className="muted">Your name</span>
               <input value={name} onChange={(e) => setName(e.target.value)} maxLength={20} />

@@ -13,7 +13,7 @@ import {
   ZONES_ALIAS,
 } from './shared-re.js';
 import { Room } from './room.js';
-import { lanUrls } from './net.js';
+import { lanAddresses, publicUrl, shareUrls } from './net.js';
 import { maybeScheduleBotTurn } from './bot.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -21,7 +21,7 @@ const PORT = Number(process.env.PORT ?? 3000);
 
 const app = express();
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, lan: lanUrls(PORT) });
+  res.json({ ok: true, lan: shareUrls(PORT) });
 });
 // Serve built client assets in production.
 const clientDist = path.resolve(__dirname, '../../client/dist');
@@ -47,7 +47,7 @@ function newRoomCode(): string {
 }
 
 function broadcastLobby(room: Room) {
-  const msg = room.lobbyUpdateMessage(lanUrls(PORT));
+  const msg = room.lobbyUpdateMessage(shareUrls(PORT));
   io.to(room.code).emit('message', msg);
 }
 
@@ -306,8 +306,10 @@ function chainBotTurns(room: Room): void {
 }
 
 httpServer.listen(PORT, '0.0.0.0', () => {
-  const urls = lanUrls(PORT);
+  const pub = publicUrl();
   // eslint-disable-next-line no-console
   console.log(`siguo server listening on http://0.0.0.0:${PORT}`);
-  for (const u of urls) console.log(`  LAN: ${u}`);
+  for (const u of lanAddresses()) console.log(`  LAN:    ${u ? `http://${u}:${PORT}` : ''}`);
+  if (pub) console.log(`  PUBLIC: ${pub}`);
+  else console.log('  (LAN only — set PUBLIC_URL to advertise a tunnel URL in the lobby)');
 });

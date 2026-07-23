@@ -8,6 +8,7 @@
     "dev": "concurrently -k -n server,client -c blue,magenta \"pnpm -C server dev\" \"pnpm -C client dev\"",
     "build": "pnpm -C shared build && pnpm -C client build && pnpm -C server build",
     "start": "pnpm -C server start",
+    "online": "bash scripts/online.sh",
     "test": "pnpm -C shared test",
     "bot-eval": "pnpm -C shared bot-eval",
     "lint": "eslint .",
